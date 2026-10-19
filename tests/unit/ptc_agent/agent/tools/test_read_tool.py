@@ -18,6 +18,7 @@ import pytest
 
 from ptc_agent.agent.backends.read_window import DEFAULT_READ_LINES, MAX_READ_CHARS
 from ptc_agent.agent.tools.file_ops import create_filesystem_tools
+from ptc_agent.core.sandbox.runtime import SandboxGoneError, SandboxTransientError
 
 
 def _make_backend(*, content: str | None, supports_validate: bool = True) -> Any:
@@ -329,3 +330,52 @@ class TestReadToolTranscripts:
         result = await read.ainvoke({"file_path": "/home/workspace/Home/notes.jsonl"})
 
         assert self.LONG in result
+
+
+class TestReadSandboxOutcome:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("raised", "outcome", "error_class"),
+        [
+            pytest.param(SandboxGoneError("gone"), "error", "SandboxGoneError", id="gone"),
+            pytest.param(
+                SandboxTransientError("unreachable"),
+                "error",
+                "SandboxTransientError",
+                id="unreachable",
+            ),
+            # What else the catch-all sees is the request refused, such as
+            # a read-only path.
+            pytest.param(PermissionError("read-only"), "ok", None, id="refused"),
+        ],
+    )
+    async def test_only_the_sandbox_failing_marks_the_run(
+        self, traced_tool, raised, outcome, error_class
+    ):
+        backend = _make_backend(content=None)
+        backend.aread_range = AsyncMock(side_effect=raised)
+
+        content, metadata = await traced_tool(
+            _get_read_tool(backend), {"file_path": "notes.md"}
+        )
+
+        assert content.startswith("ERROR")
+        assert metadata["tool_outcome"] == outcome
+        assert metadata.get("error_class") == error_class
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("file_path", "provider"),
+        [("notes.md", "docker"), ("/memory/notes.md", None)],
+        ids=["sandbox", "store-mount"],
+    )
+    async def test_the_provider_is_named_on_calls_the_sandbox_serves(
+        self, traced_tool, file_path, provider
+    ):
+        backend = _make_backend(content="hello")
+        backend.provider = "docker"
+        backend.route_for = lambda p: object() if p.startswith("/memory/") else None
+
+        _content, metadata = await traced_tool(_get_read_tool(backend), {"file_path": file_path})
+
+        assert metadata.get("tool_provider") == provider
