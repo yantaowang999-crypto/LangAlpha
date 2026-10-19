@@ -9,6 +9,7 @@ import structlog
 from langchain_core.tools import BaseTool, tool
 
 from ptc_agent.agent.backends import FilesystemBackend
+from ptc_agent.agent.tools.utils import mark_sandbox_raised, stamp_sandbox_served
 from ptc_agent.core.paths import logged_path
 from ptc_agent.core.sandbox.grep_render import GrepLine
 from src.observability.private_errors import failure
@@ -134,6 +135,7 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
                 logger.error("Access denied: path outside the allowed directories", path=logged_path(search_path))
                 return f"ERROR: {error_msg}"
 
+            stamp_sandbox_served(backend, normalized_path)
             results = await backend.agrep_rich(
                 pattern=pattern,
                 path=normalized_path,
@@ -189,6 +191,7 @@ def create_grep_tool(backend: FilesystemBackend) -> BaseTool:
             return result.rstrip() + notes
 
         except Exception as e:
+            mark_sandbox_raised(e)
             error_msg = f"Failed to grep content: {e!s}"
             fields, trace = failure(e)
             logger.error("Failed to grep content", path=logged_path(search_path), exc_info=trace, **fields)

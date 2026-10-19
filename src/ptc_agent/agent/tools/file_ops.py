@@ -28,6 +28,7 @@ from ptc_agent.agent.tools.context_file_policy import (
     fill_note,
     over_cap_refusal,
 )
+from ptc_agent.agent.tools.utils import mark_sandbox_raised, stamp_sandbox_served
 from ptc_agent.core.paths import MEMO_USER_DIR, logged_path
 from ptc_agent.agent.backends.db_json_route import UserDataValidationError
 from ptc_agent.agent.transcript.reading import READ_CHARS as TRANSCRIPT_READ_CHARS
@@ -160,6 +161,7 @@ def create_filesystem_tools(
             start_offset = offset or 0
             max_lines = limit or DEFAULT_READ_LINES
 
+            stamp_sandbox_served(backend, normalized_path)
             content = await backend.aread_range(normalized_path, start_offset, max_lines)
 
             if content is None:
@@ -271,6 +273,7 @@ def create_filesystem_tools(
             return formatted
 
         except Exception as e:
+            mark_sandbox_raised(e)
             error_msg = f"Failed to read file: {e!s}"
             fields, trace = failure(e)
             logger.error("Failed to read file", file_path=logged_path(file_path), exc_info=trace, **fields)
@@ -311,6 +314,7 @@ def create_filesystem_tools(
                     )
                     return refusal
 
+            stamp_sandbox_served(backend, normalized_path)
             try:
                 result = await backend.awrite_text(normalized_path, content)
             except ReadOnlyStoreError as exc:
@@ -360,6 +364,7 @@ def create_filesystem_tools(
             return f"{message}\n\n{note}" if note else message
 
         except Exception as e:
+            mark_sandbox_raised(e)
             error_msg = f"Failed to write file: {e!s}"
             fields, trace = failure(e)
             logger.error("Failed to write file", file_path=logged_path(file_path), exc_info=trace, **fields)
@@ -392,6 +397,7 @@ def create_filesystem_tools(
                 logger.error("Access denied: path outside the allowed directories", file_path=logged_path(file_path))
                 return f"ERROR: {error_msg}"
 
+            stamp_sandbox_served(backend, normalized_path)
             result = await backend.aedit_text(normalized_path, old_string, new_string, replace_all=replace_all)
             if not result.get("success", False):
                 error_msg = result.get("error", "Edit operation failed")
@@ -423,6 +429,7 @@ def create_filesystem_tools(
             return message
 
         except Exception as e:
+            mark_sandbox_raised(e)
             error_msg = f"Failed to edit file: {e!s}"
             fields, trace = failure(e)
             logger.error("Failed to edit file", file_path=logged_path(file_path), exc_info=trace, **fields)

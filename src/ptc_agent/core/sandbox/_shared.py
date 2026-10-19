@@ -8,7 +8,7 @@ import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import structlog
 
@@ -92,6 +92,11 @@ class ChartData:
     elements: list[Any] = field(default_factory=list)
 
 
+# The ``failure`` of a code or bash call that hit its time limit, which a tool
+# counts apart from a sandbox that raised.
+SANDBOX_TIMEOUT: Final = "timeout"
+
+
 @dataclass
 class ExecutionResult:
     """Result of code execution in sandbox."""
@@ -104,6 +109,10 @@ class ExecutionResult:
     code_hash: str
     charts: list[ChartData] = field(default_factory=list)
     mcp_trace: list[dict] = field(default_factory=list)
+    # Set only when the sandbox failed rather than the code: SANDBOX_TIMEOUT,
+    # or the class of what the call raised. A nonzero exit leaves it None, so a
+    # tool can count the sandbox's faults apart from the agent's.
+    failure: str | None = None
 
 
 @dataclass
