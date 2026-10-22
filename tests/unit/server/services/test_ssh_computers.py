@@ -172,6 +172,40 @@ def test_a_tunneled_machine_counts_by_its_tunnel_not_its_name():
     assert computer_sharing_login([namesake], removed) is None
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("limit", "held", "refused"),
+    [(20, 19, False), (20, 20, True), (1, 1, True), (0, 500, False)],
+    ids=["under", "at", "one", "no-limit"],
+)
+async def test_the_limit_counts_live_ssh_computers(monkeypatch, limit, held, refused):
+    from unittest.mock import AsyncMock
+
+    from ptc_agent.config.core import SSHConfig
+    from src.server.services import ssh_computers
+
+    count = AsyncMock(return_value=held)
+    monkeypatch.setattr(ssh_computers, "count_live_computers_of_kind", count)
+    settings = SSHConfig(max_computers_per_user=limit)
+
+    if not refused:
+        await ssh_computers.check_ssh_capacity("user-1", settings)
+        return
+    with pytest.raises(ssh_computers.SSHComputerLimit) as caught:
+        await ssh_computers.check_ssh_capacity("user-1", settings)
+    count.assert_awaited_once_with("user-1", "ssh")
+    assert caught.value.detail() == {
+        "code": "ssh_computer_limit",
+        "message": str(caught.value),
+        "limit": limit,
+    }
+    assert str(caught.value) == (
+        "You can have only 1 SSH computer. Remove it to add another."
+        if limit == 1
+        else f"You can have up to {limit} SSH computers. Remove one to add another."
+    )
+
+
 @pytest.mark.parametrize(
     "existing",
     [None, b"", b"ssh-rsa AAAAold old@host", b"ssh-rsa AAAAold old@host\n"],
@@ -243,6 +277,9 @@ async def test_a_host_key_that_does_not_parse_is_refused_before_dialing(monkeypa
     monkeypatch.setattr(ssh_computers, "spend_dials", spend)
     monkeypatch.setattr(ssh_computers, "has_client_key", AsyncMock(return_value=True))
     monkeypatch.setattr(ssh_computers, "client_key", AsyncMock(return_value="k"))
+    monkeypatch.setattr(
+        ssh_computers, "count_live_computers_of_kind", AsyncMock(return_value=0)
+    )
     spec = ComputerSSHSpec(
         host="203.0.113.10", port=22, username="dev", host_key="ssh-ed25519 AAAA"
     )

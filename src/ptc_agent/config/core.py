@@ -491,6 +491,10 @@ class SSHConfig(ResourceTieredConfig):
     # The first start installs the Python runtime, which downloads about a
     # gigabyte of packages on the machine's own network.
     bootstrap_timeout: int = Field(default=1800, ge=60)
+    # SSH computers one user may have, 0 for no limit. The plan's computer
+    # cap leaves them out, the machines being their owners', but each still
+    # holds a connection, a tunnel and its sweeps on this server.
+    max_computers_per_user: int = Field(default=20, ge=0)
     resource_tiers: dict[str, ResourceTier] = Field(
         default_factory=_single_tier, validate_default=True
     )

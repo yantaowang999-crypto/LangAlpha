@@ -286,6 +286,32 @@ describe('pairing', () => {
   });
 });
 
+describe('the SSH computer cap', () => {
+  const LIMIT = { code: 'ssh_computer_limit', message: 'server words', limit: 2 };
+
+  it('says why on a refused pairing, in place of the generic note', async () => {
+    mockMint.mockRejectedValue(apiError(409, LIMIT));
+    const user = userEvent.setup();
+    open();
+    await pickSsh(user);
+
+    expect(await screen.findByText('You can have up to 2 SSH computers. Remove one to add another.')).toBeInTheDocument();
+    expect(screen.queryByText(/one-line command is not available/)).not.toBeInTheDocument();
+  });
+
+  it('says why on a refused probe', async () => {
+    mockMint.mockRejectedValue(apiError(503, 'SSH keys cannot be stored on this server.'));
+    mockProbe.mockRejectedValue(apiError(409, LIMIT));
+    const user = userEvent.setup();
+    open();
+    await pickSsh(user);
+    await user.type(await screen.findByRole('textbox', { name: 'Host or SSH command' }), 'me@198.51.100.7');
+    await user.click(screen.getByRole('button', { name: 'Connect' }));
+
+    expect(await screen.findByText('You can have up to 2 SSH computers. Remove one to add another.')).toBeInTheDocument();
+  });
+});
+
 describe('by hand', () => {
   it('asks for the user, shows the key step on a refusal, and adds the machine once it connects', async () => {
     mockProbe

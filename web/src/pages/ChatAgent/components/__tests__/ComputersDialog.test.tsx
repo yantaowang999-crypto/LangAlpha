@@ -402,6 +402,26 @@ describe('ComputersDialog', () => {
   });
 
   it.each([
+    [1, 'You can have only 1 SSH computer. Remove it to add another.'],
+    [3, 'You can have up to 3 SSH computers. Remove one to add another.'],
+  ])('words the SSH computer cap (limit %i) in its own copy on a create', async (limit, copy) => {
+    const user = userEvent.setup();
+    const detail = { code: 'ssh_computer_limit', message: 'server words', limit };
+    mockCreate.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 409'), {
+        status: 409,
+        response: { status: 409, data: { detail }, headers: {} },
+      }),
+    );
+    await openCreateForm(user);
+
+    await user.type(screen.getByLabelText(/^Name/), 'One too many');
+    await user.click(screen.getByRole('button', { name: 'Create computer' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy);
+  });
+
+  it.each([
     ['one provider, one kind', DAYTONA_ONLY, LIVE_LIST.computers, false],
     ['two providers', DAYTONA_AND_E2B, LIVE_LIST.computers, true],
     ['machines on two kinds', DAYTONA_ONLY, [...LIVE_LIST.computers, CREATED], true],

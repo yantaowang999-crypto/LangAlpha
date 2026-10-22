@@ -94,6 +94,7 @@ sandbox:
     keepalive_interval: 15 # seconds between keepalives on the pooled connection
     keepalive_count_max: 3 # unanswered keepalives before the connection is dropped
     bootstrap_timeout: 1800 # seconds the first start may spend installing the runtime
+    max_computers_per_user: 20 # SSH computers one user may have; 0 for no limit
 
   # Platform-secret catalog: Daytona and E2B providers (ignored under
   # docker/memory). Each entry delivers a backend-owned API key into sandboxes

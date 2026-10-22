@@ -91,6 +91,7 @@ _BUDGET_SPENT = SSHDialBudgetExceeded(1800)
 async def test_a_probe_past_the_budget_is_a_429_with_its_code_and_dials_nothing(client):
     dialed = AsyncMock()
     with (
+        patch.object(computers_ssh, "check_ssh_capacity", AsyncMock()),
         patch.object(computers_ssh, "spend_dials", AsyncMock(side_effect=_BUDGET_SPENT)),
         patch.object(computers_ssh, "client_key", AsyncMock(return_value="k")),
         patch.object(computers_ssh, "probe", dialed),

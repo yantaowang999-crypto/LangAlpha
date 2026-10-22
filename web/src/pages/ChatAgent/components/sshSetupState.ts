@@ -14,6 +14,7 @@ import type { SshErrorCode, SshPairingMachine, SshTarget } from '@/types/api';
 
 import { useSshKey, useSshPairingMint, useSshPairingStatus } from '../hooks/useComputers';
 import { connectSshPairing, probeSsh } from '../utils/api';
+import { sshLimitMessage } from '../utils/sshLimit';
 import {
   apiErrorDetail,
   apiErrorDetailMessage,
@@ -238,8 +239,9 @@ export function useSshSetup(active: boolean) {
       onSuccess: (result) => setProbed({ target, probe: result }),
       onError: (err) => {
         const detail = apiErrorObject(err);
-        const code = typeof detail?.code === 'string' ? detail.code : null;
-        const message = code ? (apiErrorDetailMessage(err) ?? '') : requestErrorText(err, t);
+        const limit = sshLimitMessage(err, t);
+        const code = !limit && typeof detail?.code === 'string' ? detail.code : null;
+        const message = limit ?? (code ? (apiErrorDetailMessage(err) ?? '') : requestErrorText(err, t));
         const retryAfter = typeof detail?.retry_after === 'number' ? detail.retry_after : undefined;
         setProbeFailure({ code, message, target, username: target.username, os: null, retryAfter });
       },
@@ -307,6 +309,8 @@ export function useSshSetup(active: boolean) {
     setFilesBackup,
     pairing: {
       unavailable: mint.isError,
+      // Why the one-line command was refused, when the reason is the cap.
+      limitMessage: mint.isError ? sshLimitMessage(mint.error, t) : null,
       command: token ? mint.data?.command ?? null : null,
       localOnly: mint.data?.local_only ?? false,
       scriptUrl: token ? mint.data?.script_url ?? null : null,

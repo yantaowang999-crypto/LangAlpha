@@ -479,6 +479,15 @@ _SSH_CREATE = {
 _SSH = "src.server.services.ssh_computers"
 
 
+@pytest.fixture(autouse=True)
+def ssh_computers_held():
+    """How many live ssh computers the caller has, which the cap counts."""
+    with patch(
+        f"{_SSH}.count_live_computers_of_kind", AsyncMock(return_value=0)
+    ) as count:
+        yield count
+
+
 def _found(**overrides):
     """What a probe of the machine in ``_SSH_CREATE`` finds."""
     from ptc_agent.core.sandbox.providers.ssh import SSHProbe
@@ -634,6 +643,117 @@ async def test_an_ssh_computer_is_created_outside_the_plan_caps_and_may_skip_bac
     assert manager.create_computer_for_user.await_args.kwargs["files_backup"] is False
     capped.assert_not_awaited()
     tier.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_ssh_create_at_the_limit_is_refused_before_dialing(
+    client, computer, entitled, sandbox_config, ssh_computers_held
+):
+    sandbox_config.offered_providers = ("ssh",)
+    sandbox_config.ssh.max_computers_per_user = 2
+    ssh_computers_held.return_value = 2
+    manager = _creating_manager({**computer, "kind": "ssh"})
+    dial = AsyncMock()
+    with (
+        patch("src.server.app.computers._computer_manager", return_value=manager),
+        patch(f"{_SSH}.probe", dial),
+    ):
+        resp = await client.post("/api/v1/computers", json=_SSH_CREATE)
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == {
+        "code": "ssh_computer_limit",
+        "message": "You can have up to 2 SSH computers. Remove one to add another.",
+        "limit": 2,
+    }
+    ssh_computers_held.assert_awaited_once_with(USER, "ssh")
+    dial.assert_not_awaited()
+    manager.create_computer_for_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_two_creates_for_the_last_ssh_computer_add_one(
+    client, computer, entitled, sandbox_config, prepares, ssh_computers_held
+):
+    """Both pass the count made before their probes; the count again under
+    the lock, which the insert holds too, refuses the second."""
+    import asyncio
+    import contextlib
+
+    sandbox_config.offered_providers = ("ssh",)
+    sandbox_config.ssh.max_computers_per_user = 3
+    held = [{"kind": "ssh"}, {"kind": "ssh"}]
+    ssh_computers_held.side_effect = lambda *_args: len(held)
+    lock = asyncio.Lock()
+
+    @contextlib.asynccontextmanager
+    async def _lock(user_id):
+        async with lock:
+            yield
+
+    async def _insert(*_args, **kwargs):
+        await asyncio.sleep(0)
+        held.append({"kind": "ssh"})
+        return {**computer, "kind": "ssh", "status": "stopped", "provider_ref": None}
+
+    async def _probe(*_args, **_kwargs):
+        # Both creates are past the first count before either inserts.
+        await asyncio.sleep(0.01)
+        return _found()
+
+    manager = MagicMock()
+    manager.create_computer_for_user = AsyncMock(side_effect=_insert)
+    with (
+        patch("src.server.app.computers._computer_manager", return_value=manager),
+        patch(f"{_SSH}.has_client_key", AsyncMock(return_value=True)),
+        patch(f"{_SSH}.client_key", AsyncMock(return_value="private key")),
+        patch(f"{_SSH}.probe", _probe),
+        patch(f"{_SSH}.get_computers_for_user", AsyncMock(return_value=[])),
+        patch("src.server.app.computers.computer_capacity_lock", _lock),
+    ):
+        answers = await asyncio.gather(
+            client.post("/api/v1/computers", json=_SSH_CREATE),
+            client.post(
+                "/api/v1/computers",
+                json={
+                    **_SSH_CREATE,
+                    "ssh": {**_SSH_CREATE["ssh"], "root_dir": "/home/dev/other"},
+                },
+            ),
+        )
+
+    assert sorted(a.status_code for a in answers) == [201, 409]
+    refused = next(a for a in answers if a.status_code == 409)
+    assert refused.json()["detail"]["code"] == "ssh_computer_limit"
+    assert manager.create_computer_for_user.await_count == 1
+    assert len(held) == 3
+
+
+@pytest.mark.asyncio
+async def test_no_limit_counts_nothing(
+    client, computer, entitled, sandbox_config, prepares, ssh_computers_held
+):
+    import contextlib
+
+    @contextlib.asynccontextmanager
+    async def _lock(user_id):
+        yield
+
+    sandbox_config.offered_providers = ("ssh",)
+    sandbox_config.ssh.max_computers_per_user = 0
+    manager = _creating_manager({**computer, "kind": "ssh"})
+    with (
+        patch("src.server.app.computers._computer_manager", return_value=manager),
+        patch(f"{_SSH}.has_client_key", AsyncMock(return_value=True)),
+        patch(f"{_SSH}.client_key", AsyncMock(return_value="private key")),
+        patch(f"{_SSH}.probe", AsyncMock(return_value=_found())),
+        patch(f"{_SSH}.get_computers_for_user", AsyncMock(return_value=[])),
+        patch("src.server.app.computers.computer_capacity_lock", _lock),
+    ):
+        resp = await client.post("/api/v1/computers", json=_SSH_CREATE)
+
+    assert resp.status_code == 201, resp.text
+    ssh_computers_held.assert_not_awaited()
 
 
 @pytest.mark.asyncio

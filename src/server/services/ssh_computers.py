@@ -23,7 +23,10 @@ from ptc_agent.config.core import SSHConfig
 from ptc_agent.core.sandbox.providers import ssh as ssh_provider
 from ptc_agent.core.sandbox.providers._ssh_authorized_key import authorized_key_line
 from ptc_agent.core.sandbox.providers.ssh_errors import SSHConnectError
-from src.server.database.computer import get_computers_for_user
+from src.server.database.computer import (
+    count_live_computers_of_kind,
+    get_computers_for_user,
+)
 from src.server.database.encryption import encryption_configured
 from src.server.database.ssh_keys import (
     get_user_ssh_private_key,
@@ -61,6 +64,24 @@ class SSHKeyMissing(RuntimeError):
 
 class SSHFolderTaken(RuntimeError):
     """Another of the owner's computers on the machine works in the folder, above or below it."""
+
+
+class SSHComputerLimit(RuntimeError):
+    """The user has as many ssh computers as the deployment allows one user."""
+
+    code = "ssh_computer_limit"
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        super().__init__(
+            "You can have only 1 SSH computer. Remove it to add another."
+            if limit == 1
+            else f"You can have up to {limit} SSH computers. Remove one to add another."
+        )
+
+    def detail(self) -> Dict[str, Any]:
+        """The refusal as an API detail, whose ``code`` the client words."""
+        return {"code": self.code, "message": str(self), "limit": self.limit}
 
 
 def _require_encryption() -> None:
@@ -246,6 +267,17 @@ def provider_config_for(
     }
 
 
+async def check_ssh_capacity(user_id: str, settings: SSHConfig) -> None:
+    """Refuse another ssh computer once the user has ``max_computers_per_user``.
+
+    Raises:
+        SSHComputerLimit: The user is at the limit.
+    """
+    limit = settings.max_computers_per_user
+    if limit and await count_live_computers_of_kind(user_id, SSH_KIND) >= limit:
+        raise SSHComputerLimit(limit)
+
+
 def computer_sharing_folder(
     computers: Iterable[Dict[str, Any]],
     *,
@@ -390,20 +422,23 @@ class SSHCreatePlan:
     provider_config: Dict[str, Any]
     root_dir: str
     default_name: str
+    settings: SSHConfig
 
     async def recheck(self, user_id: str) -> None:
-        """The folder check again, under the lock the insert holds, and the
-        tunnel's pairing renewed.
+        """The limit and the folder checked again, under the lock the insert
+        holds, and the tunnel's pairing renewed.
 
-        Two creates for one folder both pass the check made before the probe,
-        which is too slow to hold the lock. A tunnel left unused since its
-        pairing may meanwhile be claimed for taking off its machine; renewed
-        here, before the row that names it exists, it is not.
+        Two creates both pass the checks made before the probe, which is too
+        slow to hold the lock. A tunnel left unused since its pairing may
+        meanwhile be claimed for taking off its machine; renewed here, before
+        the row that names it exists, it is not.
 
         Raises:
+            SSHComputerLimit: Another create took the last one since.
             SSHFolderTaken: Another of the caller's computers took it since.
             SSHConnectError: The tunnel is gone, or being taken off its machine.
         """
+        await check_ssh_capacity(user_id, self.settings)
         await _unshared_root_dir(user_id, self.spec, self.root_dir)
         if self.spec.tunnel_id is not None:
             renewed = await renew_tunnel(user_id, self.spec.tunnel_id)
@@ -438,6 +473,7 @@ async def plan_create(
     starts.
 
     Raises:
+        SSHComputerLimit: The caller has as many as the deployment allows.
         SSHKeyMissing: The caller has no client key, so the machine cannot
             trust it yet.
         SSHUnavailable: As for :func:`client_key`.
@@ -447,6 +483,7 @@ async def plan_create(
         SSHFolderTaken: Another of the caller's computers there works in the
             folder.
     """
+    await check_ssh_capacity(user_id, settings)
     if not await has_client_key(user_id):
         raise SSHKeyMissing(
             "Add your SSH key to the machine before adding it. "
@@ -534,6 +571,7 @@ async def plan_create(
         ),
         root_dir=root_dir,
         default_name=found.hostname or spec.host,
+        settings=settings,
     )
 
 

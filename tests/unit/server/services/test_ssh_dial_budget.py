@@ -168,6 +168,7 @@ async def test_a_create_spends_its_dials_before_the_first(monkeypatch, fields, s
         pass
 
     monkeypatch.setattr(ssh_computers, "spend_dials", record)
+    monkeypatch.setattr(ssh_computers, "check_ssh_capacity", AsyncMock())
     monkeypatch.setattr(ssh_computers, "has_client_key", AsyncMock(return_value=True))
     monkeypatch.setattr(ssh_computers, "tunnels_enabled", lambda: True)
     monkeypatch.setattr(ssh_computers, "get_user_tunnel", AsyncMock(return_value={}))

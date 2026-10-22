@@ -82,6 +82,7 @@ from src.server.services.spec_change import (
 )
 from src.server.services.ssh_computers import (
     SSH_KIND,
+    SSHComputerLimit,
     SSHFolderTaken,
     SSHKeyMissing,
     SSHCreatePlan,
@@ -456,6 +457,8 @@ def _ssh_create_refusals():
     """
     try:
         yield
+    except SSHComputerLimit as e:
+        raise HTTPException(status_code=409, detail=e.detail()) from None
     except (SSHKeyMissing, SSHFolderTaken) as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
     except SSHDialBudgetExceeded as e:

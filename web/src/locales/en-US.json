@@ -1552,6 +1552,8 @@
       "pairFailedNext": "Fix it and run the command again, or enter the address yourself:",
       "pairRerun": "Fix it and run the command again.",
       "pairOtherUser": "The command ran as {{username}}. To use another login, run it as that user.",
+      "limitReached_one": "You can have only {{count}} SSH computer. Remove it to add another.",
+      "limitReached_other": "You can have up to {{count}} SSH computers. Remove one to add another.",
       "pairUnavailable": "The one-line command is not available on this server, so set it up by hand.",
       "manualLink": "Set it up by hand instead",
       "pairingLink": "Use the one-line command instead",

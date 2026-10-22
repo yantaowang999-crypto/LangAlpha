@@ -300,6 +300,22 @@ async def get_computers_for_user(
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def count_live_computers_of_kind(
+    user_id: str, kind: str, *, conn=None
+) -> int:
+    async with _computer_cursor(conn) as cur:
+        await cur.execute(
+            f"""
+            SELECT count(*) AS computers
+            FROM computers
+            WHERE user_id = %s AND kind = %s AND {FENCE_NOT_DELETED}
+            """,
+            (user_id, kind),
+        )
+        row = await cur.fetchone()
+        return int(row["computers"]) if row else 0
+
+
 async def get_computer_names_and_home(
     user_id: str,
     *,

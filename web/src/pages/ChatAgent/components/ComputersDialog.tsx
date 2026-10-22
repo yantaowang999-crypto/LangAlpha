@@ -54,6 +54,7 @@ import { formatSshReached } from './sshTarget';
 import { apiErrorObject, apiErrorReason, apiErrorStatus } from '../utils/api';
 import { denialMessage } from '../utils/denialMessage';
 import { entitlementErrorMessage } from '../utils/entitlementErrors';
+import { sshLimitMessage } from '../utils/sshLimit';
 
 type Translate = ReturnType<typeof useTranslation>['t'];
 
@@ -108,7 +109,7 @@ function ComputersDialog({
   // A refused start relays the quota service's own sentence (denialMessage).
   const error = power.error ? denialMessage(power.error, t) : null;
   const createError = create.error
-    ? entitlementErrorMessage(create.error, t, create.variables?.resource_tier)
+    ? (sshLimitMessage(create.error, t) ?? entitlementErrorMessage(create.error, t, create.variables?.resource_tier))
     : null;
   const removeError = remove.error ? removeErrorMessage(remove.error, t) : null;
   const focusId = createdId ?? focusComputerId;

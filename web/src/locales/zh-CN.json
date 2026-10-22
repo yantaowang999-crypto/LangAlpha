@@ -1550,6 +1550,8 @@
       "pairFailedNext": "修复后重新运行命令，或自行输入地址：",
       "pairRerun": "修复后重新运行命令。",
       "pairOtherUser": "命令是以 {{username}} 身份运行的。如需换一个登录用户，请以该用户身份运行命令。",
+      "limitReached_one": "最多可以添加 {{count}} 台 SSH 计算机。请先移除一台，再添加新的。",
+      "limitReached_other": "最多可以添加 {{count}} 台 SSH 计算机。请先移除一台，再添加新的。",
       "pairUnavailable": "此服务器不支持一行命令，请手动设置。",
       "manualLink": "改为手动设置",
       "pairingLink": "改用一行命令",
