@@ -18,7 +18,9 @@ agree on them without a shared file: whichever process asks first makes them.
 from __future__ import annotations
 
 import asyncio
+import base64
 import functools
+import hashlib
 import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -33,10 +35,10 @@ from src.server.database.encryption import encryption_configured
 from src.server.database.ssh_tunnels import ensure_gateway_key
 
 DEFAULT_PORT = 2022
-# The folder under the login's home where a machine keeps its tunnel: its key,
-# the gateway's pinned key, the loop that keeps the tunnel open, and
-# ``uninstall.sh``, which takes all of it away again.
-TUNNEL_DIR = ".langalpha/tunnel"
+# Where under the login's home a machine keeps each tunnel, in a folder named
+# by :func:`tunnel_name`: its key, the gateway's pinned key, the loop that keeps
+# the tunnel open, and ``uninstall.sh``, which takes all of it away again.
+TUNNEL_PARENT = ".langalpha"
 UNINSTALL_SCRIPT = "uninstall.sh"
 
 
@@ -111,6 +113,26 @@ async def gateway_host_key() -> Tuple[str, str]:
     return await ensure_gateway_key(
         "host", functools.partial(_new_key, "langalpha-gateway")
     )
+
+
+def tunnel_name(host_key: str) -> str:
+    """What a machine calls its tunnel to the gateway holding *host_key*: the
+    folder under ``TUNNEL_PARENT``, the LaunchAgent and the systemd unit.
+
+    One per deployment, so a login paired with two keeps both, and pairing
+    again replaces only its own. The gateway's host key is what a machine
+    knows a deployment by, and it lives in the database: restarts, redeploys
+    and a new public address keep it. A key replaced there is a deployment the
+    machines no longer trust anyway, having pinned the old one.
+    """
+    blob = base64.b64decode(host_key.split()[1])
+    return "tunnel-" + hashlib.sha256(blob).hexdigest()[:8]
+
+
+async def deployment_tunnel_name() -> str:
+    """:func:`tunnel_name` for this deployment's gateway."""
+    host_key, _ = await gateway_host_key()
+    return tunnel_name(host_key)
 
 
 async def gateway_dialer_key() -> Tuple[str, str]:

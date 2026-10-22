@@ -31,6 +31,8 @@ _SECOND_KEY = (
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINtrK5WFrGlR2uf038jBnBgAvICChwc8DD1Mw46Bixsq"
 )
 _TUNNEL = "5b0f3c1e-8d2a-4c6b-9e7f-1a2b3c4d5e6f"
+# What this deployment's gateway key names its machines' tunnels.
+_TUNNEL_NAME = "tunnel-0a1b2c3d"
 _SETTINGS = SSHConfig()
 
 
@@ -220,7 +222,7 @@ _FAKE_CURL = (
 )
 
 
-def _serve(monkeypatch, pairing=None):
+def _serve(monkeypatch, pairing=None, tunnel_name=_TUNNEL_NAME):
     """The script's render for *pairing*, its key ours."""
 
     async def load(token):
@@ -231,6 +233,9 @@ def _serve(monkeypatch, pairing=None):
 
     monkeypatch.setattr(state, "load", load)
     monkeypatch.setattr(script, "ensure_client_key", key)
+    monkeypatch.setattr(
+        script, "deployment_tunnel_name", AsyncMock(return_value=tunnel_name)
+    )
 
 
 @pytest.mark.asyncio
@@ -305,6 +310,89 @@ async def test_a_script_that_stops_tells_the_server_why(tmp_path, monkeypatch):
     assert (tmp_path / "curl-config").read_text() == f'url = "{_REPORT_URL}"\n'
 
 
+# Stand-ins for what a tunneled run reaches on a Linux machine, the service
+# managers among them, so nothing here starts, stops or reads a real service.
+# The report answers 202 to send the run off to tunnel, and then 200.
+_TUNNEL_FAKES = {
+    "uname": "echo Linux",
+    "curl": _FAKE_CURL
+    + """
+case $(cat "$HOME/curl-config") in
+  *'/tunnel"'*) printf 'tunnel_id=%s\\ngateway_host=gw.example\\ngateway_port=2022\\n' "$TID"
+    printf 'known_hosts=[gw.example]:2022 ssh-ed25519 AAAAgateway\\n200' ;;
+  *) n=$(( $(cat "$HOME/reports" 2>/dev/null || echo 0) + 1 )); echo $n > "$HOME/reports"
+    if [ $((n % 2)) = 1 ]; then printf 'tunnel\\nIt connects out.\\n202'; else printf 'Connected.\\n200'; fi ;;
+esac""",
+    "ssh-keyscan": "echo localhost ssh-ed25519 AAAAmachine",
+    "ssh-keygen": """
+y=
+while [ $# -gt 0 ]; do case $1 in -y) y=1 ;; -f) f=$2; shift ;; esac; shift; done
+if [ -n "$y" ]; then echo "ssh-ed25519 AAAA$(cksum < "$f" | cut -d' ' -f1)"
+else echo "key $$" > "$f" && echo "ssh-ed25519 AAAAx" > "$f.pub"; fi""",
+    "ssh": "exit 0",
+    "systemctl": 'echo "$*" >> "$HOME/systemctl.log"',
+    "loginctl": "exit 0",
+    "crontab": "exit 0",
+    "launchctl": 'echo "$*" >> "$HOME/launchctl.log"; exit 1',
+}
+
+
+@pytest.mark.asyncio
+async def test_tunnels_to_two_deployments_live_side_by_side(tmp_path, monkeypatch):
+    """One login paired with two deployments keeps a tunnel to each, and
+    pairing again with one replaces only its own, keeping its key."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in _TUNNEL_FAKES.items():
+        (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+        (bin_dir / name).chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(script, "tunnels_enabled", lambda: True)
+    units = home / ".config" / "systemd" / "user"
+    deployments = {
+        "tunnel-aaaaaaaa": "11111111-1111-4111-8111-111111111111",
+        "tunnel-bbbbbbbb": "22222222-2222-4222-8222-222222222222",
+    }
+
+    async def pair(name):
+        _serve(monkeypatch, tunnel_name=name)
+        run = subprocess.run(
+            ["sh", "-c", await script.render_script("abc", _SETTINGS)],
+            env={
+                "HOME": str(home),
+                "PATH": f"{bin_dir}:/usr/bin:/bin",
+                "TID": deployments[name],
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert run.returncode == 0, run.stdout + run.stderr
+
+    await pair("tunnel-aaaaaaaa")
+    key = (home / ".langalpha" / "tunnel-aaaaaaaa" / "id_ed25519").read_text()
+    await pair("tunnel-bbbbbbbb")
+    await pair("tunnel-aaaaaaaa")
+
+    for name, tunnel_id in deployments.items():
+        d = home / ".langalpha" / name
+        assert (d / "tunnel_id").read_text() == f"{tunnel_id}\n"
+        uninstall = (d / "uninstall.sh").read_text()
+        assert f"label=ai.langalpha.{name}\n" in uninstall
+        assert f"unit=langalpha-{name}.service\n" in uninstall
+        assert f"ExecStart=/bin/sh {d}/run.sh\n" in (
+            units / f"langalpha-{name}.service"
+        ).read_text()
+    assert (home / ".langalpha" / "tunnel-aaaaaaaa" / "id_ed25519").read_text() == key
+    log = (home / "systemctl.log").read_text().splitlines()
+    assert log.count("--user enable --now langalpha-tunnel-aaaaaaaa.service") == 2
+    assert log.count("--user enable --now langalpha-tunnel-bbbbbbbb.service") == 1
+    # Pairing again took down its own service, and never the other's.
+    assert log.count("--user disable --now langalpha-tunnel-aaaaaaaa.service") == 1
+    assert "--user disable --now langalpha-tunnel-bbbbbbbb.service" not in log
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tunnels", [False, True])
 async def test_the_script_parses(monkeypatch, tunnels):
@@ -322,26 +410,27 @@ async def test_the_script_parses(monkeypatch, tunnels):
 # Python strings: the parts are reassembled, never rewritten. Changed since:
 # the key line, which carries its options, the URLs, which reach curl as
 # config on its stdin, the host keys asked of the machine's own sshd when no
-# file has them, the tunnel loop's waits, drawn at random, and the run each
-# report and stop names.
+# file has them, the tunnel loop's waits, drawn at random, the run each
+# report and stop names, and the tunnel's folder and service, named for the
+# deployment (named ``tunnel``, the tunneled ones render as pinned before).
 _RENDERED = {
     ("https://langalpha.example.com", False): (
         "164822f6f1dd3da3692d25d8303c49b61072679dcd8ca7f2cdaf75bb167738ea"
     ),
     ("https://langalpha.example.com", True): (
-        "c535ea36903ce545eea0f69899267cd134945c2efe737c08fa0017b38fcd6410"
+        "dc6bcf339ca15117ed8521385a2fbf840f38921ddf7d067fbcc0c97cbb6120cb"
     ),
     ("http://127.0.0.1:8000", False): (
         "075b2891f7524801fa0f587509217b062dfac0790f4d8b04e9b5abfa77cac524"
     ),
     ("http://127.0.0.1:8000", True): (
-        "b3ef4d26ec3f672be81ffb6515c4ae4ecb3df488eab6c9658826c42d5719c7d0"
+        "666c9d86ed18ad54bee6237ae08848a594a08adb32248e7422a10b1f24995965"
     ),
     ("http://[::1]:8000", False): (
         "2b70537889e0496254c0999740ee53fc4bec8f71d9307c85dcde00e176327d1e"
     ),
     ("http://[::1]:8000", True): (
-        "f052ebcdd9c0157e6a9c219a2bb355da5f134b1b8a5b6837647feaac4582fcb1"
+        "953fbfde166535d4b1452d5be43f8d198a596e210f1ba7718fd7b285886cc3bf"
     ),
     (None, False): "59d0a2e548d9fa61be969ee269ed92e8620e74903b4fc7f3357faf1a8c489c89",
 }
@@ -362,6 +451,9 @@ async def test_the_script_renders_byte_for_byte_as_it_did(monkeypatch, base, tun
     monkeypatch.setattr(state, "load", load)
     monkeypatch.setattr(script, "ensure_client_key", key)
     monkeypatch.setattr(script, "tunnels_enabled", lambda: tunnels)
+    monkeypatch.setattr(
+        script, "deployment_tunnel_name", AsyncMock(return_value=_TUNNEL_NAME)
+    )
 
     rendered = await script.render_script("0123456789abcdef0123456789abcdef", _SETTINGS)
 
@@ -753,6 +845,9 @@ async def test_a_report_naming_another_accounts_tunnel_is_refused_not_taken_over
     monkeypatch.setattr(flow, "tunnels_enabled", lambda: True)
     monkeypatch.setattr(flow, "renew_tunnel", AsyncMock(return_value=None))
     monkeypatch.setattr(flow, "get_tunnel", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        flow, "deployment_tunnel_name", AsyncMock(return_value=_TUNNEL_NAME)
+    )
     await _store()
 
     status, message = await flow.report(
@@ -762,7 +857,9 @@ async def test_a_report_naming_another_accounts_tunnel_is_refused_not_taken_over
         settings=_SETTINGS,
     )
 
-    assert (status, message) == (409, flow._TUNNEL_TAKEN)
+    assert status == 409
+    # This deployment's tunnel, the one the machine reported.
+    assert f"sh ~/.langalpha/{_TUNNEL_NAME}/uninstall.sh," in message
     view = (await state.load("abc")).view()
     assert (view.status, view.error.message) == ("failed", message)
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import shlex
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -29,7 +30,7 @@ from ptc_agent.core.sandbox.providers.ssh_errors import SSHConnectError
 from src.server.database import ssh_tunnels as db
 from src.server.services.ssh_computers import SSH_KIND, load_client_key, tunnel_of
 from src.server.services.ssh_tunnels import (
-    TUNNEL_DIR,
+    TUNNEL_PARENT,
     UNINSTALL_SCRIPT,
     tunnels_enabled,
 )
@@ -60,13 +61,25 @@ _RELEASE_TIMEOUT_S = 15.0
 # A release claimed this recently is another one, or the sweep, still at it.
 # Twice the timeout above, as the stamp before an uninstall lasts.
 _RELEASE_CLAIM = db.TAKE_OFF_WINDOW
-# Detached, so the command answers before the tunnel it rides on goes, and
-# tested first, so a machine that already took its tunnel away is no error.
-_UNINSTALL_SH = (
-    f'f="$HOME/{TUNNEL_DIR}/{UNINSTALL_SCRIPT}"\n'
-    '[ -f "$f" ] && { nohup sh "$f" >/dev/null 2>&1 & }\n'
-    "exit 0\n"
-)
+
+
+def _uninstall_sh(tunnel_id: str) -> str:
+    """The machine's command that runs the uninstall of tunnel *tunnel_id*.
+
+    The folder is found by the id it holds, which no other deployment hands
+    out, so a tunnel another deployment keeps on the same login is left alone
+    whatever its folder is called. Detached, so the command answers before the
+    tunnel it rides on goes; a machine that already took it away is no error.
+    """
+    return (
+        f"id={shlex.quote(tunnel_id)}\n"
+        f'for f in "$HOME"/{TUNNEL_PARENT}/tunnel*/tunnel_id; do\n'
+        '  [ "$(cat "$f" 2>/dev/null)" = "$id" ] || continue\n'
+        f'  u="${{f%/*}}/{UNINSTALL_SCRIPT}"\n'
+        '  [ -f "$u" ] && { nohup sh "$u" >/dev/null 2>&1 & }\n'
+        "done\n"
+        "exit 0\n"
+    )
 
 
 class TakeOff(StrEnum):
@@ -167,7 +180,7 @@ async def uninstall_tunnel(
         status = await ssh_provider.run_script(
             target,
             await load_client_key(key_owner),
-            _UNINSTALL_SH,
+            _uninstall_sh(tunnel_id),
             timeout=_RELEASE_TIMEOUT_S,
         )
     if status != 0:

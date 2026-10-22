@@ -48,8 +48,9 @@ from src.server.services.ssh_pairing.state import (
     ReportedMachine,
 )
 from src.server.services.ssh_tunnels import (
-    TUNNEL_DIR,
+    TUNNEL_PARENT,
     UNINSTALL_SCRIPT,
+    deployment_tunnel_name,
     gateway_host_key,
     gateway_public_address,
     tunnels_enabled,
@@ -83,8 +84,8 @@ _ANOTHER_TUNNEL_KEY = (
 _TUNNEL_TAKEN = (
     f"This machine's tunnel belongs to another {PRODUCT} account, whose "
     "computers on this machine use it. To connect this account instead, run "
-    f"sh ~/{TUNNEL_DIR}/{UNINSTALL_SCRIPT}, which disconnects them, then run the "
-    "command again."
+    f"sh ~/{TUNNEL_PARENT}/{{name}}/{UNINSTALL_SCRIPT}, which disconnects them, "
+    "then run the command again."
 )
 _TOO_MANY_TUNNELS = (
     f"This account already has {MAX_TUNNELS_PER_USER} machines connecting out to "
@@ -153,7 +154,7 @@ async def report(
             if await get_tunnel(tunnel_id) is not None:
                 # Another account's: setting up one of this account's in its
                 # place would leave that account's computers here unreachable.
-                return await _refuse(pairing, 409, _TUNNEL_TAKEN)
+                return await _refuse(pairing, 409, await _tunnel_taken())
             tunnel_id = None
     tried = dial.candidates(machine, settings=settings, tunnel_id=tunnel_id)
     # Before anything is dialed: a report is the machine's word, and anyone
@@ -258,6 +259,12 @@ async def _refuse(pairing: PairingState, status: int, message: str) -> Tuple[int
     if not await state.stop(pairing, message):
         return 404, EXPIRED
     return status, message
+
+
+async def _tunnel_taken() -> str:
+    """Names the uninstall of this deployment's tunnel, the one the machine
+    reported or set up: another deployment's beside it is no obstacle."""
+    return _TUNNEL_TAKEN.format(name=await deployment_tunnel_name())
 
 
 async def _settle(
@@ -402,7 +409,7 @@ async def issue_tunnel(token: str, form: ComputerSSHTunnelRequest) -> Tuple[int,
             hostname=dial.printable(form.hostname, 255),
         )
     except TunnelKeyTaken:
-        return 409, _TUNNEL_TAKEN
+        return 409, await _tunnel_taken()
     except TooManyTunnels:
         return 409, _TOO_MANY_TUNNELS
     if row is None:
