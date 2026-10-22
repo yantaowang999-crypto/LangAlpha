@@ -51,6 +51,28 @@ SESSION_FUNCTIONS_SH = (
     'case $p in ""|*[!0-9]*) return 1;; esac; '
     '[ -n "$t" ] && [ "$(st "$p")" = "$t" ]; }; '
 )
+
+# Every command's wrapper exports its record as ``EXEC_MARK=<pid>-<start>``,
+# which whatever the command starts inherits.
+EXEC_MARK = "LANGALPHA_EXEC"
+# ``ours PGID MARK`` succeeds when a process in group PGID carries the mark.
+# With the leader gone, the group's id alone proves nothing: once the group
+# empties, the id may go to someone else's group, which the mark tells apart.
+# A process shows the environment it was started with, so a subshell that ran
+# no program, or a program that cleared its environment, shows none, and with
+# no /proc (macOS) ps hides that of Apple's own binaries. A group left with
+# only those stays unproven, and running.
+GROUP_MARK_SH = (
+    f'ours() {{ local g="$1" m="{EXEC_MARK}=$2" f l; '
+    "if [ -d /proc/1 ]; then for f in /proc/[0-9]*/stat; do "
+    '{ read -r l < "$f"; } 2>/dev/null || continue; l=${l##*) }; set -- $l; '
+    '[ "$3" = "$g" ] || continue; '
+    r"""tr '\000' '\n' 2>/dev/null < "${f%/stat}/environ" | grep -qxF -- "$m" """
+    "&& return 0; done; return 1; fi; "
+    "LC_ALL=C ps -axwwE -o pgid=,command= 2>/dev/null | "
+    """G="$g" M="$m" awk '$1 == ENVIRON["G"] { for (i = 2; i <= NF; i++) """
+    """if ($i == ENVIRON["M"]) { f = 1; exit } } END { exit !f }'; }; """
+)
 # The code a shell reports for a SIGKILL, which is how a wrapper ends without
 # writing its exit code (the OOM killer, or a kill -9).
 _KILLED_EXIT = 137
@@ -138,10 +160,12 @@ class ExecSessionRuntime(SandboxRuntime):
             f'{self._session_sh}D="$R/{session_id}"; '
             "L=; if command -v setsid >/dev/null 2>&1; then L=setsid; else set -m; fi; "
             "nohup $L bash -c '"
-            "echo \"$$ $(cut -d\" \" -f22 /proc/$$/stat 2>/dev/null || "
-            f"{{ {ps_start_sh('$$')}; }})\" > \"$1/{cmd_id}.new\" "
+            "__la_s=$(cut -d\" \" -f22 /proc/$$/stat 2>/dev/null || "
+            f"{{ {ps_start_sh('$$')}; }}); "
+            f"echo \"$$ $__la_s\" > \"$1/{cmd_id}.new\" "
             f"&& mv \"$1/{cmd_id}.new\" \"$1/{cmd_id}.pid\" || exit; "
-            f"( set --; eval \"$(echo {encoded} | base64 -d)\" ); "
+            f"export {EXEC_MARK}=\"$$-$__la_s\"; "
+            f"( set --; unset __la_s; eval \"$(echo {encoded} | base64 -d)\" ); "
             f"echo $? > \"$1/{cmd_id}.exit\""
             f"' bash \"$D\" > \"$D/{cmd_id}.stdout\" 2> \"$D/{cmd_id}.stderr\" &"
         )
@@ -239,20 +263,20 @@ class ExecSessionRuntime(SandboxRuntime):
         # marks a missing session.
         #
         # Kill the entire process group (negative PID) so child processes
-        # spawned by the session command are also terminated. A group's id is
-        # not handed out again while the group has a member, so with the
-        # wrapper gone, a group by that id is, short of a full wrap of the pid
-        # space, what the command left behind. A pid that names another
-        # process now is not this command's to signal.
+        # spawned by the session command are also terminated. With the wrapper
+        # gone, a group by its id is the command's only while a member carries
+        # its mark (``ours``). A pid that names another process now is not
+        # this command's to signal.
         result = await self.exec(
-            f'{self._session_sh}D="$R/{session_id}"; X="$R/.{session_id}.$$"; '
+            f'{self._session_sh}{GROUP_MARK_SH}'
+            f'D="$R/{session_id}"; X="$R/.{session_id}.$$"; '
             'mv "$D" "$X" || { [ -e "$D" ] || exit 3; exit 1; }; '
             'for f in "$X"/*.pid; do '
             "  { read -r pid start < \"$f\"; } 2>/dev/null; "
             "  case $pid in \"\"|*[!0-9]*) continue;; esac; "
             "  now=$(st $pid); "
             "  if [ \"$now\" = \"$start\" ]; then kill -- -$pid; kill $pid; "
-            "  elif [ -z \"$now\" ]; then kill -- -$pid; fi; "
+            "  elif [ -z \"$now\" ] && ours $pid \"$pid-$start\"; then kill -- -$pid; fi; "
             'done 2>/dev/null; rm -rf -- "$X"',
             timeout=10,
         )

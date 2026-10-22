@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.sandbox.providers import _ssh_bootstrap as bootstrap
 from ptc_agent.core.sandbox.providers._exec_sessions import (
+    EXEC_MARK,
+    GROUP_MARK_SH,
     SESSION_FUNCTIONS_SH,
     ps_start_sh,
 )
@@ -430,7 +432,8 @@ SESSION_SH = _proc_or_ps(_SESSION_LINUX_SH, _SESSION_PS_SH)
 
 # Field 22 of /proc/<pid>/stat is the start time, counted after the command
 # name, which may hold spaces. A group's leader writes its own pid and start
-# time, so a stop never signals a pid that has since gone to someone else.
+# time, so a stop never signals a pid that has since gone to someone else,
+# and exports them as the mark that proves a group it left is its own.
 # macOS's bash 3.2 has no $BASHPID, so the leader learns its pid as the parent
 # of a process it execs, and with no /proc its start time is ps's, as ``st``
 # reads it (``_exec_sessions``).
@@ -440,6 +443,7 @@ _PIDFILE_SH = (
     "__la_s=${__la_s##*) }; set -- $__la_s; __la_s=${20}; "
     f"else __la_s=$({ps_start_sh(chr(34) + '$__la_me' + chr(34))}); fi; "
     'echo "$__la_me $__la_s" > "$__la_dir/execs/$__la_pre$__la_me"; '
+    f'export {EXEC_MARK}="$__la_me-$__la_s"; '
 )
 
 
@@ -570,8 +574,8 @@ def stop_script(cdir: str, *, root: bool, computer_root: str = "") -> str:
     """Mark the computer stopped and end every process group it left.
 
     A group is signalled only while its leader is the process recorded, or
-    once the leader is gone: a group's id is not handed out again while the
-    group has a member. Records from before a reboot name nothing alive, and
+    once the leader is gone, while a member carries the command's mark
+    (``GROUP_MARK_SH``). Records from before a reboot name nothing alive, and
     their ids may be anyone's now, so they are dropped unsignalled. ``root``
     ends only the records ``exec_as_root`` left, and prints nothing;
     otherwise ``has-root`` says such records remain. Given ``computer_root``,
@@ -604,8 +608,8 @@ def stop_script(cdir: str, *, root: bool, computer_root: str = "") -> str:
         )
     return f"""d={shlex.quote(cdir)}
 [ -d "$d" ] || exit 0
-{mark}{SESSION_FUNCTIONS_SH}
-{SESSION_SH}{_SUPERVISOR_SH if supervisor else ""}S=
+{mark}{SESSION_FUNCTIONS_SH}{GROUP_MARK_SH}
+{SESSION_SH}{_SUPERVISOR_SH if supervisor else ""}S= P=
 sig() {{
   n=0
   for f in {records}; do
@@ -615,8 +619,10 @@ sig() {{
     now=$(st "$pid")
     if [ "$now" = "$start" ]; then
       S="$S $(la_sid "$pid")"; kill -"$1" -- "-$pid"; kill -"$1" "$pid"; n=1
-    elif [ -z "$now" ]; then
-      S="$S $(la_sid "$pid")"; kill -"$1" -- "-$pid" && n=1
+    elif [ -z "$now" ] && case " $P " in *" $pid "*) ;; *) ours "$pid" "$pid-$start";; esac; then
+      # Proven on the TERM round and trusted on the KILL round a second
+      # later: what outlived the TERM may carry no mark of its own.
+      P="$P $pid"; S="$S $(la_sid "$pid")"; kill -"$1" -- "-$pid" && n=1
     fi
   done 2>/dev/null
 {supervisor}  for s in $S; do la_sk "$1" "$s" && n=1; done
