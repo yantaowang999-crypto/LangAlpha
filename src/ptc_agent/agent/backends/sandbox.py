@@ -549,6 +549,11 @@ class SandboxBackend(SandboxBackendProtocol):
         return self.sandbox.sandbox_id
 
     @property
+    def provider(self) -> str:
+        """The kind of sandbox this is (daytona, e2b, docker), fixed for its life."""
+        return self.sandbox.config.sandbox.provider
+
+    @property
     def skills_manifest(self) -> dict[str, Any] | None:
         """Return the sandbox's skills manifest, if loaded."""
         return self.sandbox.skills_manifest
