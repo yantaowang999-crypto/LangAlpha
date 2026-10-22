@@ -1320,6 +1320,11 @@
     "failedLoadWorkspaces": "Failed to load workspaces. Please refresh the page.",
     "invalidWorkspace": "Invalid workspace. Please try again.",
     "failedDeleteWorkspace": "Failed to delete workspace. Please try again.",
+    "deleteOwnMachine": {
+      "cannotUndo": "The workspace and its threads are deleted, and this can't be undone.",
+      "filesStay": "Its files are in {{folder}} on {{computer}}, and they stay there.",
+      "alsoDeleteFiles": "Also delete {{folder}} from this machine"
+    },
     "loadingWorkspaces": "Loading workspaces...",
     "backToThreads": "Back to threads",
     "updated": "Updated {{time}}",

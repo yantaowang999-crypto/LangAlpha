@@ -1200,6 +1200,28 @@ class TestTombstone(_Base):
     @patch(f"{_RETIREMENT}.update_computer_status")
     @patch(f"{_RETIREMENT}.get_computer")
     @patch(f"{_RETIREMENT}.get_live_workspace_ids_for_computer")
+    async def test_a_folder_its_owner_kept_is_not_removed(
+        self, mock_live, mock_get, mock_status
+    ):
+        """The machine stays either way; the folder goes only when asked."""
+        manager, workspace = self._retiring_manager()
+        mock_live.return_value = []
+        computer = _make_computer(kind="ssh", is_primary=False, status="running")
+        mock_get.return_value = computer
+
+        retired = await manager._retire_machine_if_empty(
+            "comp-1", "ws-a", workspace, keep_folder=True
+        )
+
+        assert retired is False
+        manager._teardown_machine.assert_not_awaited()
+        mock_status.assert_not_awaited()
+        manager._remove_workspace_folder.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch(f"{_RETIREMENT}.update_computer_status")
+    @patch(f"{_RETIREMENT}.get_computer")
+    @patch(f"{_RETIREMENT}.get_live_workspace_ids_for_computer")
     async def test_an_empty_primary_is_kept(self, mock_live, mock_get, mock_status):
         """Instant create hands the next project this machine, so it survives
         empty rather than costing the user a fresh sandbox and its disk."""

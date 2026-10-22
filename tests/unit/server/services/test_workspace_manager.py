@@ -1641,7 +1641,9 @@ class TestDeleteWorkspace:
             result = await wm.delete_workspace(ws_id)
 
         assert result is True
-        mock_db_delete.assert_awaited_once_with(ws_id)
+        mock_db_delete.assert_awaited_once_with(
+            ws_id, bound_to=_STUB_COMPUTER_ID, keep_folder=False
+        )
         wm._remove_workspace_folder.assert_awaited_once()
         wm._teardown_machine.assert_not_awaited()
         # The session belongs to the computer and outlives the project; only the
@@ -1788,8 +1790,10 @@ class TestDeleteOnASharedMachine:
             assert await wm.delete_workspace(ws_id) is True
 
         wm.backup_project_files.assert_not_awaited()
-        mock_db_delete.assert_awaited_once_with(ws_id)
-        wm._remove_workspace_folder.assert_awaited_once()
+        mock_db_delete.assert_awaited_once_with(
+            ws_id, bound_to=_STUB_COMPUTER_ID, keep_folder=True
+        )
+        wm._remove_workspace_folder.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch(
@@ -1908,6 +1912,91 @@ class TestDeleteOnASharedMachine:
             {"expected": "running"},
             {"expected": "stopping"},
         ]
+
+
+class TestDeleteKeepsTheFolderOnTheOwnersMachine:
+    """A folder on a machine its owner brought may hold work kept nowhere else,
+    so a delete leaves it unless the owner asked for it to go."""
+
+    def setup_method(self):
+        WorkspaceManager.reset_instance()
+        self._retirement_marker = patch(
+            f"{_RETIREMENT}.mark_computer_retirement_pending",
+            AsyncMock(return_value=True),
+        )
+        self._retirement_marker.start()
+        self._retirement_clear = patch(
+            f"{_RETIREMENT}.clear_computer_retirement_pending",
+            AsyncMock(return_value=True),
+        )
+        self._retirement_clear.start()
+
+    def teardown_method(self):
+        self._retirement_clear.stop()
+        self._retirement_marker.stop()
+        WorkspaceManager.reset_instance()
+
+    async def _delete(self, kind, **kwargs):
+        computer = _make_computer(computer_id=_STUB_COMPUTER_ID, kind=kind)
+        ws_id = str(uuid.uuid4())
+        wm = WorkspaceManager(_make_config())
+        wm._teardown_machine = AsyncMock()
+        wm._remove_workspace_folder = AsyncMock()
+        wm.backup_project_files = AsyncMock()
+        wm._machine_decision_lock = _decision_lock(True)
+        with (
+            patch(
+                f"{_WORKSPACE_MANAGER}.db_delete_workspace", new_callable=AsyncMock
+            ) as db_delete,
+            cm_patch(
+                "db_get_workspace",
+                AsyncMock(
+                    return_value=_make_workspace(
+                        workspace_id=ws_id,
+                        computer_id=_STUB_COMPUTER_ID,
+                        dir_name="alpha",
+                    )
+                ),
+            ),
+            patch(f"{_RETIREMENT}.get_computer", AsyncMock(return_value=computer)),
+            _patch_resolve(computer),
+            _patch_live_ids("sibling-ws"),
+        ):
+            assert await wm.delete_workspace(ws_id, **kwargs) is True
+        return ws_id, db_delete, wm._remove_workspace_folder
+
+    @pytest.mark.asyncio
+    async def test_a_delete_leaves_the_folder_by_default(self):
+        """The default is what an agent's tool and any API caller without the
+        flag get, so it is the one that must not lose files."""
+        ws_id, db_delete, remove = await self._delete("ssh")
+
+        db_delete.assert_awaited_once_with(
+            ws_id, bound_to=_STUB_COMPUTER_ID, keep_folder=True
+        )
+        remove.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_owner_asking_deletes_the_folder(self):
+        ws_id, db_delete, remove = await self._delete("ssh", delete_files=True)
+
+        db_delete.assert_awaited_once_with(
+            ws_id, bound_to=_STUB_COMPUTER_ID, keep_folder=False
+        )
+        remove.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["daytona", "e2b", "docker"])
+    @pytest.mark.parametrize("delete_files", [False, True])
+    async def test_a_hosted_machine_deletes_the_folder_either_way(
+        self, kind, delete_files
+    ):
+        ws_id, db_delete, remove = await self._delete(kind, delete_files=delete_files)
+
+        db_delete.assert_awaited_once_with(
+            ws_id, bound_to=_STUB_COMPUTER_ID, keep_folder=False
+        )
+        remove.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

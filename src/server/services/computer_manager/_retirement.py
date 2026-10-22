@@ -57,7 +57,12 @@ def _owners_machine(computer: Dict[str, Any]) -> bool:
 
 class RetirementMixin:
     async def _retire_machine_if_empty(
-        self, computer_id: str, workspace_id: str, workspace: Dict[str, Any]
+        self,
+        computer_id: str,
+        workspace_id: str,
+        workspace: Dict[str, Any],
+        *,
+        keep_folder: bool = False,
     ) -> bool:
         """Check emptiness under the machine advisory key after project tombstoning.
 
@@ -82,8 +87,10 @@ class RetirementMixin:
                     Retirement.DEFERRED,
                 ):
                     return outcome is Retirement.RETIRED
-                # The shared machine survives; remove only the departing project's folder.
-                await self._remove_workspace_folder(workspace_id, workspace, computer)
+                # The shared machine survives; remove only the departing
+                # project's folder, and none its owner kept on their machine.
+                if not keep_folder:
+                    await self._remove_workspace_folder(workspace_id, workspace, computer)
                 return False
         except Exception as e:
             # The project is already unlinked; do not fail its completed delete.

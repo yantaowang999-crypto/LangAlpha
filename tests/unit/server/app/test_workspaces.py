@@ -1818,7 +1818,12 @@ async def test_archive_workspace_forbidden(client):
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_success(client):
+@pytest.mark.parametrize(
+    "query, delete_files",
+    [("", False), ("?delete_files=true", True), ("?delete_files=false", False)],
+)
+async def test_delete_workspace_success(client, query, delete_files):
+    """Only a request that asks deletes the folder on the owner's machine."""
     ws = _ws(status="stopped")
     with (
         patch(
@@ -1833,11 +1838,13 @@ async def test_delete_workspace_success(client):
         MockWM.get_instance.return_value = mock_manager
 
         resp = await client.delete(
-            f"/api/v1/workspaces/{ws['workspace_id']}"
+            f"/api/v1/workspaces/{ws['workspace_id']}{query}"
         )
 
     assert resp.status_code == 204
-    mock_manager.delete_workspace.assert_awaited_once_with(ws["workspace_id"])
+    mock_manager.delete_workspace.assert_awaited_once_with(
+        ws["workspace_id"], delete_files=delete_files
+    )
 
 
 @pytest.mark.asyncio

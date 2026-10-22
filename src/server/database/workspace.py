@@ -551,9 +551,16 @@ async def get_live_workspace_ids_for_computer(
 # What a row's sandbox was last verified under, for the next start to compare.
 SANDBOX_STAMP_KEYS = ("sandbox_config_hash", "sandbox_provider", "sandbox_working_dir")
 # Written by the server alone: a forged stamp would skip the migration a start
-# owes, and folder landings and a move's backoff are the folder settle's
-# record. A client's config carries none of them in.
-SERVER_OWNED_CONFIG_KEYS = ("folder_landings", "folder_move_blocked", *SANDBOX_STAMP_KEYS)
+# owes, folder landings and a move's backoff are the folder settle's record,
+# and a delete's markers decide whether a folder on its owner's machine is
+# removed. A client's config carries none of them in.
+SERVER_OWNED_CONFIG_KEYS = (
+    "folder_landings",
+    "folder_move_blocked",
+    "folder_cleanup_pending",
+    "folder_kept",
+    *SANDBOX_STAMP_KEYS,
+)
 
 
 async def stamp_computer_sandbox_config(computer_id: str, stamp: Dict[str, Any]) -> None:
@@ -1572,6 +1579,9 @@ async def lock_run_workspace(conn, thread_id: str) -> None:
 async def delete_workspace(
     workspace_id: str,
     conn=None,
+    *,
+    bound_to: Optional[str] = None,
+    keep_folder: bool = False,
 ) -> bool:
     """Project deletion must leave the shared computer alone.
 
@@ -1579,6 +1589,11 @@ async def delete_workspace(
     then the binding remains, and FENCE_NOT_DELETED prevents reuse after tombstoning.
     The tombstone is the only deletion: a row removed outright takes the layout
     owner's identity with it, and ON DELETE SET NULL leaves the folder unowned.
+
+    ``keep_folder`` leaves the folder where it is: the tombstone holds its name
+    with ``folder_kept`` and nothing queues its removal. That choice depends on
+    the computer, so ``bound_to`` names the one it was made for, and a row a
+    move has bound elsewhere since is refused rather than decided wrongly.
     """
     from src.server.database.egress_grants import (
         lock_user_egress_state,
@@ -1598,9 +1613,12 @@ async def delete_workspace(
                 # Same lock order as grant sync: owner first, workspace second.
                 await lock_user_egress_state(cur, owner["user_id"])
                 await cur.execute(
-                    "SELECT workspace_id FROM workspaces WHERE workspace_id = %s FOR UPDATE",
+                    "SELECT workspace_id, computer_id FROM workspaces WHERE workspace_id = %s FOR UPDATE",
                     (workspace_id,),
                 )
+                locked = await cur.fetchone()
+                if bound_to is not None and str((locked or {}).get("computer_id")) != str(bound_to):
+                    raise WorkspaceBusyError(MOVING_DELETE_REFUSAL)
                 if await workspace_has_live_runs(cur, workspace_id):
                     raise WorkspaceBusyError(
                         "This workspace has active work. Stop it or wait for it to finish before deleting."
@@ -1609,24 +1627,34 @@ async def delete_workspace(
                 # would have cleared a folder it found missing.
                 if await workspace_is_moving(workspace_id, conn=owned):
                     raise WorkspaceBusyError(MOVING_DELETE_REFUSAL)
+                # Exactly one of the two markers, whatever the row carried in.
                 await cur.execute(
                     """
                     UPDATE workspaces
                     SET status = 'deleted',
                         config = CASE
-                            WHEN computer_id IS NOT NULL AND dir_name IS NOT NULL
+                            WHEN computer_id IS NULL OR dir_name IS NULL THEN config
+                            WHEN %(keep)s
                             THEN jsonb_set(
-                                COALESCE(config, '{}'::jsonb),
+                                COALESCE(config, '{}'::jsonb) #- '{folder_cleanup_pending}',
+                                '{folder_kept}',
+                                'true'::jsonb
+                            )
+                            ELSE jsonb_set(
+                                COALESCE(config, '{}'::jsonb) #- '{folder_kept}',
                                 '{folder_cleanup_pending}',
                                 'true'::jsonb
                             )
-                            ELSE config
                         END,
-                        updated_at = %s
-                    WHERE workspace_id = %s AND status <> 'deleted'
+                        updated_at = %(now)s
+                    WHERE workspace_id = %(id)s AND status <> 'deleted'
                     RETURNING workspace_id, computer_id
                     """,
-                    (datetime.now(timezone.utc), workspace_id),
+                    {
+                        "keep": keep_folder,
+                        "now": datetime.now(timezone.utc),
+                        "id": workspace_id,
+                    },
                 )
                 result = await cur.fetchone()
                 if result:

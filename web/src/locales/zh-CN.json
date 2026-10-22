@@ -1318,6 +1318,11 @@
     "failedLoadWorkspaces": "加载工作区失败，请刷新页面。",
     "invalidWorkspace": "无效工作区，请重试。",
     "failedDeleteWorkspace": "删除工作区失败，请重试。",
+    "deleteOwnMachine": {
+      "cannotUndo": "工作区及其对话将被删除，此操作无法撤销。",
+      "filesStay": "它的文件位于 {{computer}} 上的 {{folder}} 中，会保留在那里。",
+      "alsoDeleteFiles": "同时从这台机器上删除 {{folder}}"
+    },
     "loadingWorkspaces": "加载工作区中...",
     "backToThreads": "返回对话列表",
     "updated": "更新于 {{time}}",

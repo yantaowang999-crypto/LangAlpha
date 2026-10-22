@@ -331,6 +331,8 @@ class WorkspaceManager(ComputerManager):
     async def delete_workspace(
         self,
         workspace_id: str,
+        *,
+        delete_files: bool = False,
     ) -> bool:
         """
         Delete a workspace: the project only, never its machine by itself.
@@ -341,14 +343,26 @@ class WorkspaceManager(ComputerManager):
         live project left on it, and not the user's primary, which instant
         create hands the next project.
 
+        On a machine its owner brought, the folder holds their files, which
+        may be a clone or work kept nowhere else: it stays where it is unless
+        ``delete_files`` says the owner asked for it to go. Every other
+        caller, an agent's tool included, leaves it.
+
         Args:
             workspace_id: Workspace UUID
+            delete_files: The owner asked for the folder on their machine to go too.
 
         Returns:
             True if deleted successfully
         """
         binding = await self.resolve_binding(workspace_id)
         computer_id = binding.computer_id
+        try:
+            owners_machine = not binding.provider.recreatable
+        except ValueError:
+            # A kind this build cannot reach, where nothing is removed anyway.
+            owners_machine = True
+        keep_folder = owners_machine and not delete_files
         async with self._observed_lock(computer_id, "workspace.delete"):
             workspace = await self.workspace_row(workspace_id)
             if not workspace:
@@ -381,10 +395,12 @@ class WorkspaceManager(ComputerManager):
                 # Soft delete in DB. Before the emptiness decision, so two
                 # deletes racing a machine's last two projects cannot both read
                 # the other as a live sibling and both leave it running.
-                await db_delete_workspace(workspace_id)
+                await db_delete_workspace(
+                    workspace_id, bound_to=computer_id, keep_folder=keep_folder
+                )
 
                 retired = await self._retire_machine_if_empty(
-                    computer_id, workspace_id, workspace
+                    computer_id, workspace_id, workspace, keep_folder=keep_folder
                 )
 
                 logger.info(f"Workspace {workspace_id} deleted successfully")
