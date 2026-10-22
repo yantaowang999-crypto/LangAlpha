@@ -47,7 +47,7 @@ from ptc_agent.core.sandbox.providers._ssh_shell import (
     root_dir_script,
     stop_script,
 )
-from ptc_agent.core.sandbox.providers._ssh_transport import TRANSPORT_ERRORS, Link
+from ptc_agent.core.sandbox.providers._ssh_transport import TRANSPORT_ERRORS, Link, pool
 from ptc_agent.core.sandbox.providers.ssh_errors import (
     SSHConnectError,
     connect_failure,
@@ -325,6 +325,26 @@ async def run_script(
     """
     async with _one_off(ssh_target(config), private_key) as link:
         return (await link.run(script, timeout=timeout + 20)).exit_code
+
+
+@contextlib.asynccontextmanager
+async def removal_link(config: SSHConfig) -> AsyncIterator[Link | None]:
+    """The connection a removed computer's delete ran on, closed once the
+    steps after it are done; None when none is open.
+
+    Those steps (taking the key's line away, then the tunnel) run there rather
+    than on a new login: a machine the delete could not reach is not dialed
+    again, and the key going first cannot lock out the uninstall after it.
+
+    Raises:
+        ValueError: As for :func:`ssh_target`.
+    """
+    target = ssh_target(config)
+    try:
+        yield pool().peek(target)
+    finally:
+        # Other computers on the login may share it; the idle sweep has those.
+        pool().retire(target, only_if_idle=True)
 
 
 @contextlib.asynccontextmanager

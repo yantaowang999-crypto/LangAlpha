@@ -17,7 +17,7 @@ import logging
 import posixpath
 import re
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from ptc_agent.config.core import SSHConfig
 from ptc_agent.core.sandbox.providers import ssh as ssh_provider
@@ -268,14 +268,67 @@ def computer_sharing_folder(
     for computer in computers:
         if computer.get("kind") != SSH_KIND:
             continue
-        config = computer.get("provider_config") or {}
-        if config.get("host_key") != host_key and not _same_address(
-            config, host=host, port=port, tunnel_id=tunnel_id
+        if not _same_machine(
+            computer.get("provider_config") or {},
+            host=host,
+            port=port,
+            host_key=host_key,
+            tunnel_id=tunnel_id,
         ):
             continue
         if _nested(computer.get("root_dir") or "", root_dir):
             return computer
     return None
+
+
+def other_ssh_computers(
+    computers: Iterable[Dict[str, Any]], computer: Dict[str, Any]
+) -> Iterator[Dict[str, Any]]:
+    """The live ssh computers in ``computers`` other than ``computer``."""
+    for other in computers:
+        if (
+            other.get("kind") == SSH_KIND
+            and other.get("status") != "deleted"
+            and str(other.get("computer_id")) != str(computer.get("computer_id"))
+        ):
+            yield other
+
+
+def computer_sharing_login(
+    computers: Iterable[Dict[str, Any]], computer: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Another live ssh computer logging in to ``computer``'s machine as its user.
+
+    A user's computers all log in with the user's one key, so the key's line
+    there is that one's too, and taking it away would lock it out. A machine
+    counts as the same as for :func:`computer_sharing_folder`, where a clone
+    taken for it only leaves the key in place.
+    """
+    config = computer.get("provider_config") or {}
+    for other in other_ssh_computers(computers, computer):
+        theirs = other.get("provider_config") or {}
+        if theirs.get("username") == config.get("username") and _same_machine(
+            theirs,
+            host=config.get("host") or "",
+            port=config.get("port"),
+            host_key=config.get("host_key") or "",
+            tunnel_id=config.get("tunnel") or None,
+        ):
+            return other
+    return None
+
+
+def _same_machine(
+    config: Dict[str, Any],
+    *,
+    host: str,
+    port: Any,
+    host_key: str,
+    tunnel_id: Optional[str],
+) -> bool:
+    return config.get("host_key") == host_key or _same_address(
+        config, host=host, port=port, tunnel_id=tunnel_id
+    )
 
 
 def _same_address(

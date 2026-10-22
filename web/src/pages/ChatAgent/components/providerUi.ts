@@ -52,6 +52,14 @@ export function providerKeepsFilesOnRemove(kind: string): boolean {
   return !!providerUi(kind)?.ownMachine;
 }
 
+/**
+ * Our key sits in the machine's `authorized_keys` for as long as we log in
+ * there, so removing the computer can take it out; a sandbox has no such line.
+ */
+export function providerHoldsOurKey(kind: string): boolean {
+  return !!providerUi(kind)?.ownMachine;
+}
+
 // hasOwn: a wire value like 'constructor' must not resolve to a prototype member.
 function providerUi(kind: string) {
   return Object.hasOwn(PROVIDER_UI, kind) ? PROVIDER_UI[kind] : undefined;

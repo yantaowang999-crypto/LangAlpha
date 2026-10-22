@@ -11,6 +11,7 @@ import type {
   ComputerActionResponse,
   ComputerCreate,
   ComputerProvidersResponse,
+  ComputerRemoveResponse,
   ComputerStorage,
   ComputersResponse,
   MakePrimaryResponse,
@@ -143,14 +144,23 @@ export async function setComputerSpec(computerId: string, tier: ResourceTier): P
 
 /**
  * Remove a computer: its sandbox and everything on its disk go with it. The
- * server answers 204 and keeps a tombstone, which the list no longer returns.
- * It refuses with a 409 whose `detail.code` says why: `primary`,
- * `has_workspaces`, or `busy` (moving between states, being prepared,
- * changing spec, or held by another action).
+ * server keeps a tombstone, which the list no longer returns, and answers what
+ * became of our key line on an SSH computer's machine (`key`, null for other
+ * kinds and when `removeKey` was false). `removeKey` is sent explicitly, so the
+ * choice the user saw is the one that is made. It refuses with a 409 whose
+ * `detail.code` says why: `primary`, `has_workspaces`, or `busy` (moving
+ * between states, being prepared, changing spec, or held by another action).
  */
-export async function deleteComputer(computerId: string): Promise<void> {
+export async function deleteComputer(
+  computerId: string,
+  { removeKey }: { removeKey: boolean },
+): Promise<ComputerRemoveResponse> {
   if (!computerId) throw new Error('Computer ID is required');
-  await api.delete(`/api/v1/computers/${computerId}`, { timeout: COMPUTER_MUTATION_TIMEOUT_MS });
+  const { data } = await api.delete<ComputerRemoveResponse>(`/api/v1/computers/${computerId}`, {
+    params: { remove_key: removeKey },
+    timeout: COMPUTER_MUTATION_TIMEOUT_MS,
+  });
+  return data;
 }
 
 /**

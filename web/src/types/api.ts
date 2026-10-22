@@ -312,6 +312,21 @@ export interface ComputerActionResponse {
   message?: string;
 }
 
+/** `DELETE /api/v1/computers/{id}` */
+export interface ComputerRemoveResponse {
+  /** What happened to our key line on an SSH computer's machine; null for other kinds, and when remove_key was false. */
+  key: ComputerKeyRemoval | null;
+}
+
+export interface ComputerKeyRemoval {
+  outcome: 'removed' | 'kept' | 'skipped' | 'unreached';
+  /** On `kept`: the name of the user's other computer that still logs in with the key. */
+  used_by: string | null;
+  /** The key's SHA256 fingerprint ("SHA256:...") and its comment ("langalpha"), for removing it by hand. */
+  fingerprint: string | null;
+  comment: string | null;
+}
+
 /** One entry of `GET /api/v1/computers/providers`. */
 export interface ComputerProviderOption {
   /** A sandbox backend, plain like {@link Computer.kind}: a deployment can

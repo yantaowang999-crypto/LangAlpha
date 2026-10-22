@@ -1451,16 +1451,90 @@ def _removing(row, manager):
 
 
 @pytest.mark.asyncio
-async def test_remove_answers_204_once_the_computer_is_gone(
+async def test_remove_of_a_hosted_computer_has_no_key_to_report(
     client, computer, mock_computer_manager
 ):
+    leave = AsyncMock()
     get_row, get_manager = _removing(computer, mock_computer_manager)
-    with get_row, get_manager:
+    with get_row, get_manager, patch("src.server.app.computers.leave_machine", leave):
         resp = await client.delete(f"/api/v1/computers/{COMPUTER_ID}")
 
-    assert resp.status_code == 204
-    assert resp.content == b""
+    assert resp.status_code == 200
+    assert resp.json() == {"key": None}
     mock_computer_manager.remove_computer.assert_awaited_once_with(COMPUTER_ID)
+    leave.assert_not_awaited()
+
+
+def _ssh_row(computer, *, tunnel=""):
+    return {
+        **computer,
+        "kind": "ssh",
+        "provider_config": {
+            "host": "203.0.113.10",
+            "port": 22,
+            "username": "dev",
+            "host_key": _HOST_KEY,
+            "key_owner": USER,
+            "tunnel": tunnel,
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "remove_key"), [("", True), ("?remove_key=false", False)]
+)
+async def test_remove_of_an_ssh_computer_reports_its_key_after_the_delete(
+    client, computer, mock_computer_manager, query, remove_key
+):
+    from src.server.models.computer import ComputerKeyRemoval
+    from src.server.services.ssh_removal import MachineLeft
+
+    events = []
+    mock_computer_manager.remove_computer.side_effect = (
+        lambda *_: events.append("delete")
+    )
+    key = ComputerKeyRemoval(
+        outcome="removed", fingerprint="SHA256:abc/def+", comment="langalpha"
+    )
+
+    async def _leave(user_id, row, *, settings, remove_key):
+        events.append(("leave", user_id, row["computer_id"], remove_key))
+        return MachineLeft(key=key if remove_key else None, tunnel_released=False)
+
+    row = _ssh_row(computer)
+    get_row, get_manager = _removing(row, mock_computer_manager)
+    with get_row, get_manager, patch("src.server.app.computers.leave_machine", _leave):
+        resp = await client.delete(f"/api/v1/computers/{COMPUTER_ID}{query}")
+
+    assert resp.status_code == 200
+    assert resp.json()["key"] == (key.model_dump() if remove_key else None)
+    assert events == ["delete", ("leave", USER, COMPUTER_ID, remove_key)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("released", [True, False])
+async def test_a_tunnel_not_released_on_the_deletes_connection_is_released_later(
+    client, computer, mock_computer_manager, released
+):
+    from src.server.services.ssh_removal import MachineLeft
+
+    schedule = MagicMock()
+    leave = AsyncMock(return_value=MachineLeft(key=None, tunnel_released=released))
+    row = _ssh_row(computer, tunnel="t-1")
+    get_row, get_manager = _removing(row, mock_computer_manager)
+    with (
+        get_row,
+        get_manager,
+        patch("src.server.app.computers.leave_machine", leave),
+        patch("src.server.app.computers.schedule_start", schedule),
+    ):
+        resp = await client.delete(f"/api/v1/computers/{COMPUTER_ID}")
+
+    assert resp.status_code == 200
+    assert schedule.called is not released
+    if not released:
+        assert schedule.call_args.args[0] == f"tunnel-release:{COMPUTER_ID}"
 
 
 @pytest.mark.asyncio

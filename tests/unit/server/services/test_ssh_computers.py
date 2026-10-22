@@ -4,6 +4,7 @@ from ptc_agent.core.sandbox.providers._ssh_authorized_key import authorized_key_
 
 from src.server.services.ssh_computers import (
     computer_sharing_folder,
+    computer_sharing_login,
     suggested_root_dir,
 )
 
@@ -120,6 +121,55 @@ def test_a_leading_double_slash_names_the_same_folder():
         )
         is not None
     )
+
+
+def _login(computer_id, *, username="ubuntu", tunnel="", status="running", **target):
+    computer = _ssh("/home/ubuntu/langalpha", **target)
+    computer["provider_config"].update(username=username, tunnel=tunnel)
+    return {**computer, "computer_id": computer_id, "name": computer_id, "status": status}
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        _login("b"),
+        _login("b", host="box.example.com"),
+        _login("b", host_key="ssh-ed25519 AAAArekeyed"),
+    ],
+    ids=["same-target", "another-address", "another-host-key"],
+)
+def test_another_computer_on_the_login_keeps_the_key(other):
+    """The host key or the address is enough, as for a folder: a clone taken
+    for the same machine only leaves the key in place."""
+    removed = _login("a")
+
+    assert computer_sharing_login([removed, other], removed) is other
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        _login("b", username="root"),
+        _login("b", host="198.51.100.7", host_key="ssh-ed25519 AAAAother"),
+        _login("b", status="deleted"),
+        {**_login("b"), "kind": "daytona"},
+    ],
+    ids=["another-user", "another-machine", "deleted", "hosted"],
+)
+def test_nothing_else_keeps_it(other):
+    removed = _login("a")
+
+    assert computer_sharing_login([removed, other], removed) is None
+
+
+def test_a_tunneled_machine_counts_by_its_tunnel_not_its_name():
+    """Its host is only a name, which another machine may have too."""
+    removed = _login("a", tunnel="t-1", host_key="ssh-ed25519 AAAAone")
+    same = _login("b", tunnel="t-1", host_key="ssh-ed25519 AAAArekeyed")
+    namesake = _login("c", tunnel="t-2", host_key="ssh-ed25519 AAAAtwo")
+
+    assert computer_sharing_login([namesake, same], removed) is same
+    assert computer_sharing_login([namesake], removed) is None
 
 
 @pytest.mark.parametrize(

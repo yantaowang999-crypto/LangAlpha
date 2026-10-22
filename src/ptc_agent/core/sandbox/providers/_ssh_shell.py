@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import shlex
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 from ptc_agent.core.paths import SandboxLayout
 from ptc_agent.core.sandbox.providers import _ssh_bootstrap as bootstrap
@@ -112,6 +112,9 @@ def home_problem(home: str) -> str | None:
     )
 
 
+_COMPUTERS = f"{bootstrap.STATE_DIR}/computers"
+
+
 def computers_dir(home: str) -> str:
     """Where the machine keeps its computers' folders, in the login's home.
 
@@ -124,11 +127,27 @@ def computers_dir(home: str) -> str:
     problem = home_problem(home)
     if problem is not None:
         raise SSHConnectError("unsupported", problem)
-    return f"{home}/{bootstrap.STATE_DIR}/computers"
+    return f"{home}/{_COMPUTERS}"
 
 
 def computer_dir(home: str, sandbox_id: str) -> str:
     return f"{computers_dir(home)}/{sandbox_id}"
+
+
+def home_shared_script(sandbox_ids: Iterable[str]) -> str:
+    """Prints ``shared <id>`` and exits when the login's home holds the folder
+    of one of *sandbox_ids*; empty for none.
+
+    A computer whose folder is there logs in through this home's
+    ``authorized_keys`` as well, whether it reaches this machine or another
+    that mounts the same home, so a script after the check that would take
+    its key away must not run.
+    """
+    return "".join(
+        f'[ -d "$HOME"/{shlex.quote(f"{_COMPUTERS}/{i}")} ] '
+        f"&& {{ echo shared {shlex.quote(i)}; exit 0; }}\n"
+        for i in sandbox_ids
+    )
 
 
 def read_state_script(cdir: str) -> str:

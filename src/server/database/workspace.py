@@ -1712,6 +1712,31 @@ async def get_pending_workspace_folder_cleanups(
         return [dict(row) for row in await cur.fetchall()]
 
 
+async def get_folder_cleanups_owed_by(
+    computer_id: str, *, conn=None
+) -> List[Dict[str, Any]]:
+    """The deleted projects whose folder one computer still owes, whatever its status.
+
+    The reaper reads running computers only. A machine its owner brought
+    outlives the computer, whose removal is the last time the server reaches it.
+    """
+    async with _ws_cursor(conn) as cur:
+        await cur.execute(
+            """
+            SELECT workspace_id, dir_name
+            FROM workspaces
+            WHERE computer_id = %s
+              AND status = 'deleted'
+              AND dir_name IS NOT NULL
+              AND COALESCE(config, '{}'::jsonb)
+                    @> '{"folder_cleanup_pending": true}'::jsonb
+            ORDER BY updated_at ASC, workspace_id
+            """,
+            (computer_id,),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+
 async def complete_workspace_folder_cleanup(
     workspace_id: str,
     *,

@@ -55,6 +55,7 @@ from src.server.models.computer import (
     ComputerListResponse,
     ComputerProviderOption,
     ComputerProvidersResponse,
+    ComputerRemoveResponse,
     ComputerRenameRequest,
     ComputerResponse,
     ComputerSessionResponse,
@@ -91,6 +92,7 @@ from src.server.services.ssh_computers import (
     tunnels_for,
 )
 from src.server.services.ssh_dial_budget import SSHDialBudgetExceeded
+from src.server.services.ssh_removal import leave_machine
 from src.server.services.ssh_tunnel_sweep import release_tunnel
 from src.server.services.workspace_move import (
     claim_workspace_move,
@@ -550,27 +552,44 @@ async def rename_computer(
     return await _counted_response(updated)
 
 
-@router.delete("/{computer_id}", status_code=204)
-async def remove_computer(computer_id: str, x_user_id: CurrentUserId):
+@router.delete("/{computer_id}", response_model=ComputerRemoveResponse)
+async def remove_computer(
+    computer_id: str,
+    x_user_id: CurrentUserId,
+    remove_key: bool = Query(
+        True,
+        description=(
+            "On an ssh computer, take the key's line off its machine too, "
+            "unless another of the user's computers logs in through the same file"
+        ),
+    ),
+):
     """Remove a computer and its sandbox for good.
 
     Only an empty one other than the primary, which is where new workspaces
     go, so a removal never takes a workspace with it. A refusal the user can
-    act on is a 409 whose ``code`` the client words. The tunnel of a machine
-    left with no computer is taken back in the background, where a machine
-    that does not answer holds up nobody.
+    act on is a 409 whose ``code`` the client words. On an ssh computer,
+    ``key`` says what became of the key's line on its machine. The tunnel of
+    a machine left with no computer goes on the connection the delete ran
+    on, or without one in the background, where a machine that does not
+    answer holds up nobody.
     """
     async with _computer_action_errors("remove", computer_id):
         computer = await _owned_computer(computer_id, x_user_id)
         await _computer_manager().remove_computer(computer_id)
         logger.info("Removed computer %s for user %s", computer_id, x_user_id)
-        if tunnel_of(computer):
-            settings = _sandbox_config().settings_for(SSH_KIND)
+        if computer.get("kind") != SSH_KIND:
+            return ComputerRemoveResponse()
+        settings = _sandbox_config().settings_for(SSH_KIND)
+        left = await leave_machine(
+            x_user_id, computer, settings=settings, remove_key=remove_key
+        )
+        if tunnel_of(computer) and not left.tunnel_released:
             schedule_start(
                 f"tunnel-release:{computer_id}",
                 lambda: release_tunnel(x_user_id, computer, settings=settings),
             )
-    return Response(status_code=204)
+    return ComputerRemoveResponse(key=left.key)
 
 
 @router.get("/{computer_id}/storage", response_model=ComputerStorageResponse)

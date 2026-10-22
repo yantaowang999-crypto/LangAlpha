@@ -44,6 +44,7 @@ import RemoveComputerDialog from './RemoveComputerDialog';
 import MakePrimaryDialog, { MakePrimaryButton } from './MakePrimaryDialog';
 import {
   providerCanBePrimary,
+  providerHoldsOurKey,
   providerKeepsFilesOnRemove,
   providerLabel,
   providerManagesSpec,
@@ -149,10 +150,10 @@ function ComputersDialog({
     setRemoveTargetId(computerId);
   };
 
-  const confirmRemove = () => {
+  const confirmRemove = (removeKey: boolean) => {
     if (!removeTarget || remove.isPending) return;
     remove.mutate(
-      { computerId: removeTarget.computer_id, name: removeTarget.name },
+      { computerId: removeTarget.computer_id, name: removeTarget.name, removeKey },
       { onSuccess: () => setRemoveTargetId(null) },
     );
   };
@@ -266,6 +267,7 @@ function ComputersDialog({
           <RemoveComputerDialog
             name={removeTarget.name}
             filesKeptIn={providerKeepsFilesOnRemove(removeTarget.kind) ? removeTarget.root_dir : null}
+            holdsOurKey={providerHoldsOurKey(removeTarget.kind)}
             onClose={() => { if (!remove.isPending) setRemoveTargetId(null); }}
             onConfirm={confirmRemove}
             busy={remove.isPending}
