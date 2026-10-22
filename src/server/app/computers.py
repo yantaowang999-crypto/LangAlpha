@@ -90,6 +90,7 @@ from src.server.services.ssh_computers import (
     tunnel_of,
     tunnels_for,
 )
+from src.server.services.ssh_dial_budget import SSHDialBudgetExceeded
 from src.server.services.ssh_tunnel_sweep import release_tunnel
 from src.server.services.workspace_move import (
     claim_workspace_move,
@@ -455,6 +456,12 @@ def _ssh_create_refusals():
         yield
     except (SSHKeyMissing, SSHFolderTaken) as e:
         raise HTTPException(status_code=409, detail=str(e)) from None
+    except SSHDialBudgetExceeded as e:
+        raise HTTPException(
+            status_code=429,
+            detail=str(e),
+            headers={"Retry-After": str(e.retry_after)},
+        ) from None
     except SSHConnectError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
     except SSHUnavailable as e:

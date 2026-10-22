@@ -1580,6 +1580,8 @@
         "privateAddress": "The machine is on a private network, which we cannot reach. Use an address that is reachable from the internet.",
         "unsupported": "This machine is not supported.",
         "expired": "This command expired. Run the new one.",
+        "rateLimited_one": "This account has tried too many SSH connections in the last hour. Try again in {{count}} minute.",
+        "rateLimited_other": "This account has tried too many SSH connections in the last hour. Try again in {{count}} minutes.",
         "generic": "Could not connect. Try again."
       }
     }

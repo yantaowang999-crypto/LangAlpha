@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -17,6 +18,7 @@ from src.server.models.computer import (
     ComputerSSHPairingReport,
     ComputerSSHTunnelRequest,
 )
+from src.server.services.ssh_dial_budget import SSHDialBudgetExceeded
 from src.server.services.ssh_pairing import dial, flow, script, state
 from src.server.services.ssh_tunnels import GatewayAddress
 
@@ -936,3 +938,84 @@ def test_a_base_only_containers_resolve_gives_way_to_the_browsers(
     monkeypatch.setattr(state, "effective_relay_base_url", lambda kind: configured)
 
     assert state.pairing_base("http://127.0.0.1:8000/") == expected
+
+
+@pytest.fixture
+def dial_budget(monkeypatch):
+    """The budget replaced by a recorder, and the dial by a counter."""
+    spent: list[int] = []
+    dialed: list[str] = []
+    refuse: list[bool] = []
+
+    async def spend(user_id, attempts, *, settings):
+        spent.append(attempts)
+        if refuse:
+            raise SSHDialBudgetExceeded(120)
+
+    monkeypatch.setattr(flow, "spend_dials", spend)
+    monkeypatch.setattr(flow, "client_key", AsyncMock(return_value="k"))
+    monkeypatch.setattr(flow, "get_computers_for_user", AsyncMock(return_value=[]))
+
+    async def probe(private_key, *, host, **_):
+        dialed.append(host)
+        raise SSHConnectError("unreachable", "no answer")
+
+    monkeypatch.setattr(dial, "probe", probe)
+    return SimpleNamespace(spent=spent, dialed=dialed, refuse=refuse)
+
+
+@pytest.mark.asyncio
+async def test_a_report_spends_one_dial_per_address_and_port(redis, dial_budget):
+    await _store()
+    form = {**_CHECKED_IN, "addresses": "203.0.113.10 203.0.113.11", "ports": "22 2222"}
+
+    await flow.report("abc", _report(**form), sources=[], settings=_ANYWHERE)
+
+    assert dial_budget.spent == [4]
+    assert len(dial_budget.dialed) == 4
+
+
+@pytest.mark.asyncio
+async def test_a_report_past_the_budget_dials_nothing_and_fails_its_pairing(
+    redis, dial_budget
+):
+    await _store()
+    dial_budget.refuse.append(True)
+
+    status, message = await flow.report(
+        "abc", _report(**_CHECKED_IN), sources=[], settings=_ANYWHERE
+    )
+
+    assert status == 429
+    assert "too many SSH connections" in message
+    assert dial_budget.dialed == []
+    # The dialog shows why instead of waiting on a machine that checked in.
+    view = (await state.load("abc")).view()
+    assert view.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_a_tunnel_candidate_costs_nothing(redis, dial_budget, monkeypatch):
+    monkeypatch.setattr(flow, "tunnels_enabled", lambda: True)
+    monkeypatch.setattr(flow, "renew_tunnel", AsyncMock(return_value=True))
+    await _store()
+
+    await flow.report(
+        "abc",
+        _report(**_CHECKED_IN, can_tunnel="1", tunnel_id=_TUNNEL),
+        sources=[],
+        settings=_ANYWHERE,
+    )
+
+    assert dial_budget.spent == [0]
+
+
+@pytest.mark.asyncio
+async def test_connect_by_address_spends_one_dial(redis, dial_budget):
+    await _store(**_BOUND, machine=_machine("dev").model_dump_json())
+
+    await flow.connect(
+        _pairing().user_id, "abc", host="203.0.113.10", port=22, settings=_ANYWHERE
+    )
+
+    assert dial_budget.spent == [1]

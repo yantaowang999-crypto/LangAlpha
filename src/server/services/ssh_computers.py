@@ -36,6 +36,7 @@ from src.server.models.computer import (
     ComputerSSHProbeResponse,
     ComputerSSHSpec,
 )
+from src.server.services.ssh_dial_budget import spend_dials
 from src.server.services.ssh_tunnels import tunnels_enabled
 
 logger = logging.getLogger(__name__)
@@ -409,7 +410,6 @@ async def plan_create(
                 "That machine's tunnel is no longer yours or no longer exists. "
                 "Run the command on the machine again.",
             )
-    private_key = await client_key(user_id)
     # The model checks only the line's shape. A blob that does not parse
     # would fail the dial with a ValueError, which create answers as 404.
     if not is_public_key(spec.host_key):
@@ -418,6 +418,13 @@ async def plan_create(
             "The host key given is not a valid SSH public key. Test the "
             "connection again and confirm the key it shows.",
         )
+    # A tunnel dials our own gateway. Otherwise a default folder takes a
+    # first dial to find the home, then the one that holds the folder.
+    if spec.tunnel_id is None:
+        await spend_dials(
+            user_id, 1 if spec.root_dir is not None else 2, settings=settings
+        )
+    private_key = await client_key(user_id)
 
     async def dial(root_dir: Optional[str] = None) -> ssh_provider.SSHProbe:
         return await probe(

@@ -35,6 +35,7 @@ from src.server.models.computer import (
     ComputerSSHTunnelRequest,
 )
 from src.server.services import ssh_pairing
+from src.server.services.ssh_dial_budget import SSHDialBudgetExceeded, spend_dials
 from src.server.services.ssh_computers import (
     SSH_KIND,
     SSHUnavailable,
@@ -93,9 +94,25 @@ def _ssh_errors(*, structured: bool = False) -> Iterator[None]:
         raise HTTPException(
             status_code=404, detail="This command has expired."
         ) from None
+    except SSHDialBudgetExceeded as e:
+        raise _budget_refusal(e, structured=structured) from None
     except SSHConnectError as e:
         detail: Any = {"code": e.code, "message": str(e)} if structured else str(e)
         raise HTTPException(status_code=422, detail=detail) from None
+
+
+def _budget_refusal(
+    e: SSHDialBudgetExceeded, *, structured: bool = False
+) -> HTTPException:
+    """The 429 for a spent dial budget; ``retry_after`` lets a client word the wait itself."""
+    detail: Any = (
+        {"code": e.code, "message": str(e), "retry_after": e.retry_after}
+        if structured
+        else str(e)
+    )
+    return HTTPException(
+        status_code=429, detail=detail, headers={"Retry-After": str(e.retry_after)}
+    )
 
 
 def _plain_text_errors(
@@ -172,6 +189,7 @@ async def probe_ssh(request: ComputerSSHTarget, x_user_id: CurrentUserId):
     """
     settings = await _ssh_settings(x_user_id)
     with _ssh_errors(structured=True):
+        await spend_dials(x_user_id, 1, settings=settings)
         found = await probe(
             await client_key(x_user_id),
             settings=settings,

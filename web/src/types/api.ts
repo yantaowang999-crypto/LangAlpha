@@ -432,7 +432,8 @@ export type SshProbeErrorCode =
   | 'timeout'
   | 'host_key_mismatch'
   | 'unsupported'
-  | 'expired';
+  | 'expired'
+  | 'rate_limited';
 
 /** A refusal's code: one this build words, or one it shows in the server's words. */
 export type SshErrorCode = SshProbeErrorCode | (string & {});

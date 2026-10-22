@@ -468,6 +468,10 @@ class SSHConfig(ResourceTieredConfig):
     # server sits on. A deployment whose users' machines are on its own LAN or
     # VPN turns this on.
     allow_private_addresses: bool = False
+    # Dials per user per hour to addresses the user names (a probe, a pairing
+    # report, a create), counted by host and port tried. Starting a computer
+    # that exists is not counted. 0 is no limit.
+    dials_per_hour: int = Field(default=60, ge=0)
     # The machine belongs to whoever added it, so by default nothing this
     # deployment holds reaches it (``SandboxProvider.trusted_host``). A
     # deployment whose every user may hold its keys, one person self-hosting

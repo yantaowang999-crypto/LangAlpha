@@ -178,7 +178,8 @@ def test_the_key_command_writes_the_line_as_is_from_any_login_shell(
 @pytest.mark.asyncio
 async def test_a_host_key_that_does_not_parse_is_refused_before_dialing(monkeypatch):
     """It matches the model's shape check, then fails to parse in the dial as
-    a ValueError, which create would answer as a 404."""
+    a ValueError, which create would answer as a 404. Nothing is dialed, so
+    none of the hour's dials is spent."""
     from unittest.mock import AsyncMock
 
     from ptc_agent.config.core import SSHConfig
@@ -187,7 +188,9 @@ async def test_a_host_key_that_does_not_parse_is_refused_before_dialing(monkeypa
     from src.server.services import ssh_computers
 
     dial = AsyncMock()
+    spend = AsyncMock()
     monkeypatch.setattr(ssh_computers, "probe", dial)
+    monkeypatch.setattr(ssh_computers, "spend_dials", spend)
     monkeypatch.setattr(ssh_computers, "has_client_key", AsyncMock(return_value=True))
     monkeypatch.setattr(ssh_computers, "client_key", AsyncMock(return_value="k"))
     spec = ComputerSSHSpec(
@@ -199,6 +202,7 @@ async def test_a_host_key_that_does_not_parse_is_refused_before_dialing(monkeypa
 
     assert caught.value.code == "host_key_invalid"
     dial.assert_not_awaited()
+    spend.assert_not_awaited()
 
 
 def test_a_listing_fingerprints_a_key_as_the_provider_does():

@@ -28,6 +28,7 @@ from src.server.models.computer import (
     ComputerSSHPairingTarget,
     ComputerSSHTunnelRequest,
 )
+from src.server.services.ssh_dial_budget import SSHDialBudgetExceeded, spend_dials
 from src.server.services.ssh_computers import (
     client_key,
     is_public_key,
@@ -154,12 +155,22 @@ async def report(
                 # place would leave that account's computers here unreachable.
                 return await _refuse(pairing, 409, _TUNNEL_TAKEN)
             tunnel_id = None
+    tried = dial.candidates(machine, settings=settings, tunnel_id=tunnel_id)
+    # Before anything is dialed: a report is the machine's word, and anyone
+    # holding the token can post any addresses. A tunnel dials our gateway.
+    try:
+        await spend_dials(
+            pairing.user_id,
+            sum(1 for c in tried if c.tunnel_id is None),
+            settings=settings,
+        )
+    except SSHDialBudgetExceeded as e:
+        return await _refuse(pairing, 429, str(e))
     fresh = tunnel_id is not None and tunnel_id == pairing.tunnel_id
     pairing = await state.check_in(pairing, machine, tunneling=fresh)
     if pairing is None:
         return 404, EXPIRED
 
-    tried = dial.candidates(machine, settings=settings, tunnel_id=tunnel_id)
     if tunnel_id is not None:
         logger.info(
             "SSH pairing %s: %s@%s checked in, reaching it through tunnel %s",
@@ -439,6 +450,7 @@ async def connect(
         raise PairingNotFound(token)
     machine = pairing.bound.held(pairing.machine)
     tried: List[Candidate] = [Candidate(host, port)]
+    await spend_dials(user_id, len(tried), settings=settings)
     reached, missed = await dial.first_reachable(
         await client_key(user_id), machine, tried, settings=settings
     )
