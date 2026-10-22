@@ -1320,6 +1320,11 @@
     "failedLoadWorkspaces": "Failed to load workspaces. Please refresh the page.",
     "invalidWorkspace": "Invalid workspace. Please try again.",
     "failedDeleteWorkspace": "Failed to delete workspace. Please try again.",
+    "deleteOwnMachine": {
+      "cannotUndo": "The workspace and its threads are deleted, and this can't be undone.",
+      "filesStay": "Its files are in {{folder}} on {{computer}}, and they stay there.",
+      "alsoDeleteFiles": "Also delete {{folder}} from this machine"
+    },
     "loadingWorkspaces": "Loading workspaces...",
     "backToThreads": "Back to threads",
     "updated": "Updated {{time}}",
@@ -1411,9 +1416,15 @@
     "remove": "Remove",
     "removeTitle": "Remove {{name}}?",
     "removeBody": "Its sandbox and everything on its disk are deleted. This can't be undone.",
-    "removeBodyOwnMachine": "We stop using this machine and remove what we set up there for it. Your files in {{folder}} stay, and our key stays in ~/.ssh/authorized_keys until you remove it.",
+    "removeBodyOwnMachine": "We stop using this machine and remove what we set up there for it. Your files in {{folder}} stay.",
     "removeConfirm": "Remove computer",
     "removing": "Removing...",
+    "removeKey": "Remove our key from ~/.ssh/authorized_keys",
+    "keyRemoved": "We also removed our key from ~/.ssh/authorized_keys.",
+    "keyKept": "Our key stays in ~/.ssh/authorized_keys, since {{computer}} still logs in with it.",
+    "keySkipped": "We could not safely remove our key, so it still lets us log in there.",
+    "keyUnreached": "We could not reach the machine, so our key is still there.",
+    "keyRemoveYourself": "To remove it yourself, delete the line ending in {{comment}} from ~/.ssh/authorized_keys. Its fingerprint is {{fingerprint}}.",
     "removed": "{{name}} removed",
     "removeFailed": "Couldn't remove this computer. Try again.",
     "removeBlocked": {
@@ -1541,6 +1552,8 @@
       "pairFailedNext": "Fix it and run the command again, or enter the address yourself:",
       "pairRerun": "Fix it and run the command again.",
       "pairOtherUser": "The command ran as {{username}}. To use another login, run it as that user.",
+      "limitReached_one": "You can have only {{count}} SSH computer. Remove it to add another.",
+      "limitReached_other": "You can have up to {{count}} SSH computers. Remove one to add another.",
       "pairUnavailable": "The one-line command is not available on this server, so set it up by hand.",
       "manualLink": "Set it up by hand instead",
       "pairingLink": "Use the one-line command instead",
@@ -1580,6 +1593,8 @@
         "privateAddress": "The machine is on a private network, which we cannot reach. Use an address that is reachable from the internet.",
         "unsupported": "This machine is not supported.",
         "expired": "This command expired. Run the new one.",
+        "rateLimited_one": "This account has tried too many SSH connections in the last hour. Try again in {{count}} minute.",
+        "rateLimited_other": "This account has tried too many SSH connections in the last hour. Try again in {{count}} minutes.",
         "generic": "Could not connect. Try again."
       }
     }

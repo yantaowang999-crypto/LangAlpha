@@ -44,6 +44,7 @@ import RemoveComputerDialog from './RemoveComputerDialog';
 import MakePrimaryDialog, { MakePrimaryButton } from './MakePrimaryDialog';
 import {
   providerCanBePrimary,
+  providerHoldsOurKey,
   providerKeepsFilesOnRemove,
   providerLabel,
   providerManagesSpec,
@@ -53,6 +54,7 @@ import { formatSshReached } from './sshTarget';
 import { apiErrorObject, apiErrorReason, apiErrorStatus } from '../utils/api';
 import { denialMessage } from '../utils/denialMessage';
 import { entitlementErrorMessage } from '../utils/entitlementErrors';
+import { sshLimitMessage } from '../utils/sshLimit';
 
 type Translate = ReturnType<typeof useTranslation>['t'];
 
@@ -107,7 +109,7 @@ function ComputersDialog({
   // A refused start relays the quota service's own sentence (denialMessage).
   const error = power.error ? denialMessage(power.error, t) : null;
   const createError = create.error
-    ? entitlementErrorMessage(create.error, t, create.variables?.resource_tier)
+    ? (sshLimitMessage(create.error, t) ?? entitlementErrorMessage(create.error, t, create.variables?.resource_tier))
     : null;
   const removeError = remove.error ? removeErrorMessage(remove.error, t) : null;
   const focusId = createdId ?? focusComputerId;
@@ -149,10 +151,10 @@ function ComputersDialog({
     setRemoveTargetId(computerId);
   };
 
-  const confirmRemove = () => {
+  const confirmRemove = (removeKey: boolean) => {
     if (!removeTarget || remove.isPending) return;
     remove.mutate(
-      { computerId: removeTarget.computer_id, name: removeTarget.name },
+      { computerId: removeTarget.computer_id, name: removeTarget.name, removeKey },
       { onSuccess: () => setRemoveTargetId(null) },
     );
   };
@@ -266,6 +268,7 @@ function ComputersDialog({
           <RemoveComputerDialog
             name={removeTarget.name}
             filesKeptIn={providerKeepsFilesOnRemove(removeTarget.kind) ? removeTarget.root_dir : null}
+            holdsOurKey={providerHoldsOurKey(removeTarget.kind)}
             onClose={() => { if (!remove.isPending) setRemoveTargetId(null); }}
             onConfirm={confirmRemove}
             busy={remove.isPending}

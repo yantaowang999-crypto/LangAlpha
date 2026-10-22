@@ -402,6 +402,26 @@ describe('ComputersDialog', () => {
   });
 
   it.each([
+    [1, 'You can have only 1 SSH computer. Remove it to add another.'],
+    [3, 'You can have up to 3 SSH computers. Remove one to add another.'],
+  ])('words the SSH computer cap (limit %i) in its own copy on a create', async (limit, copy) => {
+    const user = userEvent.setup();
+    const detail = { code: 'ssh_computer_limit', message: 'server words', limit };
+    mockCreate.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 409'), {
+        status: 409,
+        response: { status: 409, data: { detail }, headers: {} },
+      }),
+    );
+    await openCreateForm(user);
+
+    await user.type(screen.getByLabelText(/^Name/), 'One too many');
+    await user.click(screen.getByRole('button', { name: 'Create computer' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy);
+  });
+
+  it.each([
     ['one provider, one kind', DAYTONA_ONLY, LIVE_LIST.computers, false],
     ['two providers', DAYTONA_AND_E2B, LIVE_LIST.computers, true],
     ['machines on two kinds', DAYTONA_ONLY, [...LIVE_LIST.computers, CREATED], true],
@@ -528,19 +548,22 @@ describe('ComputersDialog: removing a computer', () => {
     mockDelete.mockImplementation(async () => {
       // The server's list excludes a removed computer from here on.
       mockGetComputers.mockResolvedValue({ computers: [LIVE_LIST.computers[0]], total: 1 });
+      return { key: null };
     });
     open();
     await user.click(within(await secondRow()).getByRole('button', { name: 'Remove' }));
 
     const confirm = await screen.findByRole('dialog', { name: 'Remove Second machine?' });
     expect(confirm).toHaveTextContent("Its sandbox and everything on its disk are deleted. This can't be undone.");
+    // A cloud computer has no key line to ask about.
+    expect(within(confirm).queryByRole('checkbox')).not.toBeInTheDocument();
     await user.click(within(confirm).getByRole('button', { name: 'Remove computer' }));
 
-    expect(mockDelete).toHaveBeenCalledWith(SECOND_ID);
+    expect(mockDelete).toHaveBeenCalledWith(SECOND_ID, { removeKey: true });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Remove Second machine?' })).not.toBeInTheDocument());
     expect(screen.getAllByTestId('computer-row')).toHaveLength(1);
     expect(screen.queryByText('Second machine')).not.toBeInTheDocument();
-    expect(mockToast).toHaveBeenCalledWith({ title: 'Second machine removed' });
+    expect(mockToast).toHaveBeenCalledWith({ title: 'Second machine removed', description: undefined });
     // The button that opened the confirm went with its row.
     await waitFor(() => expect(screen.getByRole('dialog', { name: 'Computers' })).toContainElement(document.activeElement as HTMLElement));
   });
@@ -558,6 +581,79 @@ describe('ComputersDialog: removing a computer', () => {
     const confirm = await screen.findByRole('dialog', { name: 'Remove Second machine?' });
     expect(confirm).toHaveTextContent('Your files in /home/dev/langalpha stay');
     expect(confirm).not.toHaveTextContent('everything on its disk are deleted');
+  });
+
+  describe('the key line on a machine its owner brought', () => {
+    const SSH_ROW = {
+      kind: 'ssh',
+      root_dir: '/home/dev/langalpha',
+      ssh: { host: 'box.example.com', port: 22, username: 'dev', fingerprint: 'SHA256:x' },
+    };
+
+    async function confirmSsh(user: ReturnType<typeof userEvent.setup>, uncheck = false) {
+      mockGetComputers.mockResolvedValue(withSecond(SSH_ROW));
+      open();
+      await user.click(within(await secondRow()).getByRole('button', { name: 'Remove' }));
+      const confirm = await screen.findByRole('dialog', { name: 'Remove Second machine?' });
+      const box = within(confirm).getByRole('checkbox', { name: 'Remove our key from ~/.ssh/authorized_keys' });
+      expect(box).toBeChecked();
+      if (uncheck) await user.click(box);
+      await user.click(within(confirm).getByRole('button', { name: 'Remove computer' }));
+    }
+
+    it('is checked by default and sends remove_key true', async () => {
+      mockDelete.mockResolvedValue({ key: null });
+      await confirmSsh(userEvent.setup());
+      await waitFor(() => expect(mockDelete).toHaveBeenCalledWith(SECOND_ID, { removeKey: true }));
+    });
+
+    it('keeps the key when unchecked', async () => {
+      mockDelete.mockResolvedValue({ key: null });
+      await confirmSsh(userEvent.setup(), true);
+      await waitFor(() => expect(mockDelete).toHaveBeenCalledWith(SECOND_ID, { removeKey: false }));
+    });
+
+    const KEY = { used_by: null, fingerprint: 'SHA256:abc/def+', comment: 'langalpha' };
+    const BY_HAND =
+      ' To remove it yourself, delete the line ending in langalpha from ~/.ssh/authorized_keys. Its fingerprint is SHA256:abc/def+.';
+    it.each([
+      ['no outcome', { key: null }, undefined, false],
+      ['removed', { key: { ...KEY, outcome: 'removed' } }, 'We also removed our key from ~/.ssh/authorized_keys.', false],
+      [
+        'kept',
+        { key: { ...KEY, outcome: 'kept', used_by: 'Other box' } },
+        'Our key stays in ~/.ssh/authorized_keys, since Other box still logs in with it.',
+        false,
+      ],
+      [
+        'skipped',
+        { key: { ...KEY, outcome: 'skipped' } },
+        'We could not safely remove our key, so it still lets us log in there.' + BY_HAND,
+        true,
+      ],
+      [
+        'unreached',
+        { key: { ...KEY, outcome: 'unreached' } },
+        'We could not reach the machine, so our key is still there.' + BY_HAND,
+        true,
+      ],
+      [
+        'unreached with nothing to name',
+        { key: { outcome: 'unreached', used_by: null, fingerprint: null, comment: null } },
+        'We could not reach the machine, so our key is still there.',
+        true,
+      ],
+    ])('tells the outcome: %s', async (_case, res, description, stays) => {
+      mockDelete.mockResolvedValue(res);
+      await confirmSsh(userEvent.setup());
+      await waitFor(() => expect(mockToast).toHaveBeenCalled());
+      const arg = mockToast.mock.calls[0][0];
+      expect(arg.title).toBe('Second machine removed');
+      expect(arg.description).toBe(description);
+      expect(arg.variant).toBeUndefined();
+      // A left-behind key is the user's to remove: the toast waits to be closed.
+      expect(arg.duration).toBe(stays ? Infinity : undefined);
+    });
   });
 
   it('holds both buttons and says so while the remove is in flight', async () => {

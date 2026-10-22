@@ -603,6 +603,40 @@ async def test_an_incomplete_restore_is_reported_on_the_detail_and_the_list(clie
 
 
 @pytest.mark.asyncio
+async def test_the_roots_its_paths_start_under_ride_on_the_detail_and_the_list(client):
+    """The agent spells a file under its computer's root, and a turn from before
+    a move under the root of the computer it left. The web reads a workspace's
+    links from its row, seeded from the cached list, so both carry them."""
+    moved = _ws(
+        computer_root_dir="/home/someone/langalpha",
+        previous_root_dirs=["/srv/old", "/home/other/langalpha"],
+    )
+    never = _ws(name="Never moved", computer_root_dir="/home/workspace")
+
+    with patch(
+        "src.server.app.workspaces.db_get_workspace",
+        new_callable=AsyncMock,
+        return_value=moved,
+    ):
+        detail = (await client.get(f"/api/v1/workspaces/{moved['workspace_id']}")).json()
+
+    assert detail["root_dir"] == "/home/someone/langalpha"
+    assert detail["previous_root_dirs"] == ["/srv/old", "/home/other/langalpha"]
+
+    with patch(
+        "src.server.app.workspaces.get_workspaces_for_user",
+        new_callable=AsyncMock,
+        return_value=([moved, never], 2),
+    ):
+        listed = (await client.get("/api/v1/workspaces")).json()["workspaces"]
+
+    assert [(w["root_dir"], w["previous_root_dirs"]) for w in listed] == [
+        ("/home/someone/langalpha", ["/srv/old", "/home/other/langalpha"]),
+        ("/home/workspace", []),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_get_workspace_not_found(client):
     with patch(
         "src.server.app.workspaces.db_get_workspace",
@@ -1784,7 +1818,12 @@ async def test_archive_workspace_forbidden(client):
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_success(client):
+@pytest.mark.parametrize(
+    "query, delete_files",
+    [("", False), ("?delete_files=true", True), ("?delete_files=false", False)],
+)
+async def test_delete_workspace_success(client, query, delete_files):
+    """Only a request that asks deletes the folder on the owner's machine."""
     ws = _ws(status="stopped")
     with (
         patch(
@@ -1799,11 +1838,13 @@ async def test_delete_workspace_success(client):
         MockWM.get_instance.return_value = mock_manager
 
         resp = await client.delete(
-            f"/api/v1/workspaces/{ws['workspace_id']}"
+            f"/api/v1/workspaces/{ws['workspace_id']}{query}"
         )
 
     assert resp.status_code == 204
-    mock_manager.delete_workspace.assert_awaited_once_with(ws["workspace_id"])
+    mock_manager.delete_workspace.assert_awaited_once_with(
+        ws["workspace_id"], delete_files=delete_files
+    )
 
 
 @pytest.mark.asyncio

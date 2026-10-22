@@ -44,11 +44,16 @@ export async function createWorkspace(
   return data;
 }
 
-export async function deleteWorkspace(workspaceId: string) {
+/**
+ * `deleteFiles` also deletes the folder from a machine the user brought, where
+ * the server otherwise leaves it. Every other computer's folder goes regardless.
+ */
+export async function deleteWorkspace(workspaceId: string, { deleteFiles = false }: { deleteFiles?: boolean } = {}) {
   if (!workspaceId) throw new Error('Workspace ID is required');
   const id = String(workspaceId).trim();
   if (!id) throw new Error('Workspace ID cannot be empty');
-  await api.delete(`/api/v1/workspaces/${id}`);
+  const url = `/api/v1/workspaces/${id}`;
+  await (deleteFiles ? api.delete(url, { params: { delete_files: true } }) : api.delete(url));
 }
 
 export async function getWorkspace(workspaceId: string): Promise<Workspace> {

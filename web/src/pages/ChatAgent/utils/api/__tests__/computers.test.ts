@@ -213,14 +213,16 @@ describe('start/stop', () => {
 });
 
 describe('deleteComputer', () => {
-  it('deletes the computer route, which answers 204 with no body', async () => {
-    mockDelete.mockResolvedValueOnce({ data: '', status: 204, headers: {} });
-    await expect(deleteComputer('c1')).resolves.toBeUndefined();
+  it.each([true, false])('deletes the computer route with remove_key=%s and returns what happened to the key', async (removeKey) => {
+    const body = { key: { outcome: 'removed', used_by: null, fingerprint: 'SHA256:abc/def+', comment: 'langalpha' } };
+    mockDelete.mockResolvedValueOnce({ data: body, status: 200, headers: {} });
+    await expect(deleteComputer('c1', { removeKey })).resolves.toEqual(body);
     expect(mockDelete.mock.calls[0][0]).toBe('/api/v1/computers/c1');
+    expect(mockDelete.mock.calls[0][1]).toMatchObject({ params: { remove_key: removeKey } });
   });
 
   it('refuses an empty id rather than deleting a route with a hole in it', async () => {
-    await expect(deleteComputer('')).rejects.toThrow('Computer ID is required');
+    await expect(deleteComputer('', { removeKey: true })).rejects.toThrow('Computer ID is required');
     expect(mockDelete).not.toHaveBeenCalled();
   });
 });

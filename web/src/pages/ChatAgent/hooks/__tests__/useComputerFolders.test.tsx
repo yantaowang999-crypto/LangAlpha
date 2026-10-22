@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useComputerFolders } from '../useComputerFolders';
+import { getCompletedRowTitle } from '../../components/toolDisplayConfig';
 
 const mocks = vi.hoisted(() => ({
   viewed: null as Record<string, unknown> | null,
@@ -59,6 +60,26 @@ describe('useComputerFolders', () => {
     ];
     const { result } = renderHook(() => useComputerFolders('ws-1'));
     expect(result.current?.rootDir).toBe('/home/someone/langalpha');
+    mocks.computers = [];
+  });
+
+  it('names a tool by its path before the computer list answers', () => {
+    // A tool title reads its path against the computer's root. Taken from the
+    // computer list alone, which is asked for only once the row is in, a
+    // memory read under a root of its own showed "Read" and then turned into
+    // "Read memory" as the list answered.
+    const ROOT = '/home/someone/langalpha';
+    const read = { args: { file_path: `${ROOT}/.agents/user/memory/notes.md` } };
+    mocks.viewed = viewed({ root_dir: ROOT });
+    mocks.rows = [mocks.viewed];
+    mocks.computers = [];
+    const { result, rerender } = renderHook(() =>
+      getCompletedRowTitle('Read', read, undefined, { root: useComputerFolders('ws-1')?.rootDir }));
+    const pending = result.current;
+
+    mocks.computers = [{ computer_id: 'c-1', root_dir: ROOT }];
+    rerender();
+    expect([pending, result.current]).toEqual(['Read memory', 'Read memory']);
     mocks.computers = [];
   });
 

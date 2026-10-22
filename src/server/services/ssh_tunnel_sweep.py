@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import shlex
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -25,11 +26,12 @@ from typing import Any, Dict, Optional
 
 from ptc_agent.config.core import SSHConfig
 from ptc_agent.core.sandbox.providers import ssh as ssh_provider
+from ptc_agent.core.sandbox.providers._ssh_transport import Link
 from ptc_agent.core.sandbox.providers.ssh_errors import SSHConnectError
 from src.server.database import ssh_tunnels as db
 from src.server.services.ssh_computers import SSH_KIND, load_client_key, tunnel_of
 from src.server.services.ssh_tunnels import (
-    TUNNEL_DIR,
+    TUNNEL_PARENT,
     UNINSTALL_SCRIPT,
     tunnels_enabled,
 )
@@ -60,13 +62,40 @@ _RELEASE_TIMEOUT_S = 15.0
 # A release claimed this recently is another one, or the sweep, still at it.
 # Twice the timeout above, as the stamp before an uninstall lasts.
 _RELEASE_CLAIM = db.TAKE_OFF_WINDOW
-# Detached, so the command answers before the tunnel it rides on goes, and
-# tested first, so a machine that already took its tunnel away is no error.
-_UNINSTALL_SH = (
-    f'f="$HOME/{TUNNEL_DIR}/{UNINSTALL_SCRIPT}"\n'
-    '[ -f "$f" ] && { nohup sh "$f" >/dev/null 2>&1 & }\n'
-    "exit 0\n"
-)
+
+
+def _uninstall_sh(tunnel_id: str) -> str:
+    """The machine's command that runs the uninstall of tunnel *tunnel_id*.
+
+    The folder is found by the id it holds, which no other deployment hands
+    out, so a tunnel another deployment keeps on the same login is left alone
+    whatever its folder is called. Detached, so the command answers before the
+    tunnel it rides on goes; a machine that already took it away is no error.
+    """
+    return (
+        f"id={shlex.quote(tunnel_id)}\n"
+        f'for f in "$HOME"/{TUNNEL_PARENT}/tunnel*/tunnel_id; do\n'
+        '  [ "$(cat "$f" 2>/dev/null)" = "$id" ] || continue\n'
+        f'  u="${{f%/*}}/{UNINSTALL_SCRIPT}"\n'
+        '  [ -f "$u" ] && { nohup sh "$u" >/dev/null 2>&1 & }\n'
+        "done\n"
+        "exit 0\n"
+    )
+
+
+@dataclass
+class Ahead:
+    """A removal's command that runs first in the uninstall's own.
+
+    The key line a removal takes away is the login the sweep would need if
+    the uninstall did not run, so the two go out as one command: a channel
+    the machine refuses leaves both. ``sent`` once that command went out,
+    ``said`` what this part printed once it answered.
+    """
+
+    script: str
+    sent: bool = False
+    said: Optional[str] = None
 
 
 class TakeOff(StrEnum):
@@ -112,18 +141,26 @@ async def take_tunnel_off(
     login: TunnelLogin,
     paired_at: datetime,
     settings: SSHConfig,
+    link: Optional[Link] = None,
+    ahead: Optional[Ahead] = None,
 ) -> TakeOff:
     """Run the machine's own uninstall through its tunnel, then forget the tunnel.
 
     ``paired_at`` is the caller's claim on the row: a tunnel paired again since
     is left alone. A refused login leaves the row too: whether to forget it
-    then is the caller's call.
+    then is the caller's call. ``link`` and ``ahead`` as for
+    :func:`uninstall_tunnel`.
     """
     if not await db.begin_take_off(tunnel_id, paired_at=paired_at):
         return TakeOff.PAIRED_AGAIN
     try:
         await uninstall_tunnel(
-            tunnel_id, key_owner=key_owner, login=login, settings=settings
+            tunnel_id,
+            key_owner=key_owner,
+            login=login,
+            settings=settings,
+            link=link,
+            ahead=ahead,
         )
     except Exception as e:  # noqa: BLE001 - the outcome says what to do next
         if await db.get_tunnel(tunnel_id) is None:
@@ -145,14 +182,35 @@ async def take_tunnel_off(
 
 
 async def uninstall_tunnel(
-    tunnel_id: str, *, key_owner: str, login: TunnelLogin, settings: SSHConfig
+    tunnel_id: str,
+    *,
+    key_owner: str,
+    login: TunnelLogin,
+    settings: SSHConfig,
+    link: Optional[Link] = None,
+    ahead: Optional[Ahead] = None,
 ) -> None:
     """Run the machine's own uninstall through its tunnel, logged in as given.
+
+    ``link`` is a connection already logged in there, which a removal passes,
+    with the command it runs ahead of the uninstall in ``ahead``.
 
     Raises:
         Exception: The machine did not answer within ``_RELEASE_TIMEOUT_S``,
             refused the login, or the command failed.
     """
+    if link is not None:
+        command = _uninstall_sh(tunnel_id)
+        if ahead is not None:
+            # A subshell, so the uninstall runs however it exits.
+            command = f"(\n{ahead.script})\n{command}"
+            ahead.sent = True
+        result = await link.run(command, timeout=_RELEASE_TIMEOUT_S)
+        if ahead is not None:
+            ahead.said = result.stdout.decode(errors="replace")
+        if result.exit_code != 0:
+            raise RuntimeError(f"the uninstall exited {result.exit_code}")
+        return
     target = settings.model_copy(
         update={
             "host": login.host,
@@ -167,7 +225,7 @@ async def uninstall_tunnel(
         status = await ssh_provider.run_script(
             target,
             await load_client_key(key_owner),
-            _UNINSTALL_SH,
+            _uninstall_sh(tunnel_id),
             timeout=_RELEASE_TIMEOUT_S,
         )
     if status != 0:
@@ -175,19 +233,27 @@ async def uninstall_tunnel(
 
 
 async def release_tunnel(
-    user_id: str, computer: Dict[str, Any], *, settings: SSHConfig
-) -> None:
+    user_id: str,
+    computer: Dict[str, Any],
+    *,
+    settings: SSHConfig,
+    link: Optional[Link] = None,
+    ahead: Optional[Ahead] = None,
+) -> bool:
     """Take away the tunnel of a computer its owner removed, unless another uses it.
 
     The tunnel is the machine's, shared by every computer on it, so only the
     last one's removal takes it, and claiming it first has one release, or a
     release or the sweep, run the uninstall. A machine that does not answer
     keeps its row, with this computer's login on it, for the sweep to try
-    again once it is back. Never raises.
+    again once it is back. ``link`` and ``ahead`` as for
+    :func:`uninstall_tunnel`; ``ahead`` is never sent when no uninstall is
+    due. Never raises: False when it failed before deciding, which leaves the
+    tunnel to a release that tries again.
     """
     tunnel_id = tunnel_of(computer)
     if not tunnel_id:
-        return
+        return True
     computer_id = str(computer.get("computer_id"))
     try:
         tunnel = await db.claim_released_tunnel(
@@ -199,7 +265,7 @@ async def release_tunnel(
         if tunnel is None:
             # Another computer uses it, its release is under way, or it was
             # paired again for a computer still to be made.
-            return
+            return True
         config = computer.get("provider_config") or {}
         login = TunnelLogin.of(config)
         outcome = await take_tunnel_off(
@@ -208,6 +274,8 @@ async def release_tunnel(
             login=login,
             paired_at=tunnel["paired_at"],
             settings=settings,
+            link=link,
+            ahead=ahead,
         )
         if outcome in (TakeOff.AWAY, TakeOff.REFUSED):
             logger.warning(
@@ -233,6 +301,8 @@ async def release_tunnel(
         logger.exception(
             "Could not release tunnel %s of removed computer %s", tunnel_id, computer_id
         )
+        return False
+    return True
 
 
 def _ssh_settings() -> SSHConfig:

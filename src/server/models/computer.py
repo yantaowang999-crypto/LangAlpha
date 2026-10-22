@@ -693,6 +693,42 @@ class ComputerActionResponse(BaseModel):
     message: str = Field(description="Action result message")
 
 
+KeyRemovalOutcome = Literal["removed", "kept", "skipped", "unreached"]
+
+
+class ComputerKeyRemoval(BaseModel):
+    """What became of the client key's line on a removed ssh computer's machine."""
+
+    outcome: KeyRemovalOutcome = Field(
+        description=(
+            "removed: taken out of ~/.ssh/authorized_keys. kept: another of the "
+            "user's computers logs in with it through the same file, as the same "
+            "user on the machine or from a host that shares the home. "
+            "skipped: the file was not one to change safely (a link, another "
+            "owner's, missing, a line for the key its owner changed, or the key "
+            "authorized from another file). unreached: the machine did not answer"
+        )
+    )
+    used_by: Optional[str] = Field(
+        None, description="On kept, the name of the computer that still logs in with it"
+    )
+    fingerprint: Optional[str] = Field(
+        None, description="SHA256 fingerprint of the key, for removing it by hand"
+    )
+    comment: Optional[str] = Field(
+        None, description="The comment that ends the key's line"
+    )
+
+
+class ComputerRemoveResponse(BaseModel):
+    """What a removal left behind that its owner may want to know about."""
+
+    key: Optional[ComputerKeyRemoval] = Field(
+        None,
+        description="Null for a computer on any kind but ssh, and when the key was kept on request",
+    )
+
+
 class ComputerSessionResponse(BaseModel):
     """What a computer is, plus what the answering worker holds for it.
 

@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next';
 
 import { toast } from '@/components/ui/use-toast';
 import { queryKeys } from '@/lib/queryKeys';
-import type { ComputerCreate, ComputersResponse, ResourceTier } from '@/types/api';
+import type { ComputerCreate, ComputerRemoveResponse, ComputersResponse, ResourceTier } from '@/types/api';
 
 import {
   createComputer,
@@ -41,6 +41,35 @@ import {
 import { seedWorkspaceMove, watchMove } from './useWorkspaceMove';
 
 export type PowerAction = 'start' | 'stop';
+
+type Translate = ReturnType<typeof useTranslation>['t'];
+
+/** What became of our key line, in a sentence or two; undefined when there is nothing to say. */
+function keyRemovalNote(key: ComputerRemoveResponse['key'] | undefined, t: Translate): string | undefined {
+  if (!key) return undefined;
+  const byHand =
+    key.comment && key.fingerprint
+      ? ` ${t(
+          'computer.keyRemoveYourself',
+          'To remove it yourself, delete the line ending in {{comment}} from ~/.ssh/authorized_keys. Its fingerprint is {{fingerprint}}.',
+          { comment: key.comment, fingerprint: key.fingerprint },
+        )}`
+      : '';
+  switch (key.outcome) {
+    case 'removed':
+      return t('computer.keyRemoved', 'We also removed our key from ~/.ssh/authorized_keys.');
+    case 'kept':
+      return t('computer.keyKept', 'Our key stays in ~/.ssh/authorized_keys, since {{computer}} still logs in with it.', {
+        computer: key.used_by ?? '',
+      });
+    case 'skipped':
+      return t('computer.keySkipped', 'We could not safely remove our key, so it still lets us log in there.') + byHand;
+    case 'unreached':
+      return t('computer.keyUnreached', 'We could not reach the machine, so our key is still there.') + byHand;
+    default:
+      return undefined;
+  }
+}
 
 export function useComputerActions() {
   const { t } = useTranslation();
@@ -178,12 +207,21 @@ export function useComputerActions() {
   // that is gone; the refetch then confirms it with the server's list. The
   // name rides in the variables because the row is gone by the time it is read.
   const remove = useMutation({
-    mutationFn: ({ computerId }: { computerId: string; name: string }) => deleteComputer(computerId),
-    onSuccess: (_res, { computerId, name }) => {
+    mutationFn: ({ computerId, removeKey }: { computerId: string; name: string; removeKey: boolean }) =>
+      deleteComputer(computerId, { removeKey }),
+    onSuccess: (res, { computerId, name }) => {
       removeComputerRow(queryClient, computerId);
       queryClient.removeQueries({ queryKey: queryKeys.computers.storage(computerId) });
       invalidateMachine(queryClient);
-      toast({ title: t('computer.removed', '{{name}} removed', { name }) });
+      // A key left behind is the user's to remove and the fingerprint is
+      // something to copy, so those stay until closed. Still the plain
+      // variant: the removal itself succeeded.
+      const stays = res.key?.outcome === 'skipped' || res.key?.outcome === 'unreached';
+      toast({
+        title: t('computer.removed', '{{name}} removed', { name }),
+        description: keyRemovalNote(res.key, t),
+        ...(stays ? { duration: Infinity } : {}),
+      });
     },
     // A refusal can mean the row moved under the dialog (a workspace landed,
     // a start began), so the list re-reads to show why.

@@ -14,6 +14,7 @@ import type { SshErrorCode, SshPairingMachine, SshTarget } from '@/types/api';
 
 import { useSshKey, useSshPairingMint, useSshPairingStatus } from '../hooks/useComputers';
 import { connectSshPairing, probeSsh } from '../utils/api';
+import { sshLimitMessage } from '../utils/sshLimit';
 import {
   apiErrorDetail,
   apiErrorDetailMessage,
@@ -42,6 +43,8 @@ export interface SshFailure {
   username: string | null;
   /** The machine's `uname -s`, when it reported one. */
   os: string | null;
+  /** Seconds until the dial budget renews, on `rate_limited`. */
+  retryAfter?: number;
 }
 
 /** The server's sentence when it gave one, else ours. */
@@ -87,6 +90,15 @@ export function failureText(failure: SshFailure, t: Translate): string {
       return failure.message || t('computer.ssh.error.unsupported', 'This machine is not supported.');
     case 'expired':
       return t('computer.ssh.error.expired', 'This command expired. Run the new one.');
+    case 'rate_limited':
+      if (failure.retryAfter) {
+        return t('computer.ssh.error.rateLimited', {
+          count: Math.max(1, Math.ceil(failure.retryAfter / 60)),
+          defaultValue_one: 'This account has tried too many SSH connections in the last hour. Try again in {{count}} minute.',
+          defaultValue_other: 'This account has tried too many SSH connections in the last hour. Try again in {{count}} minutes.',
+        });
+      }
+      break;
   }
   return failure.message || t('computer.ssh.error.generic', 'Could not connect. Try again.');
 }
@@ -227,9 +239,11 @@ export function useSshSetup(active: boolean) {
       onSuccess: (result) => setProbed({ target, probe: result }),
       onError: (err) => {
         const detail = apiErrorObject(err);
-        const code = typeof detail?.code === 'string' ? detail.code : null;
-        const message = code ? (apiErrorDetailMessage(err) ?? '') : requestErrorText(err, t);
-        setProbeFailure({ code, message, target, username: target.username, os: null });
+        const limit = sshLimitMessage(err, t);
+        const code = !limit && typeof detail?.code === 'string' ? detail.code : null;
+        const message = limit ?? (code ? (apiErrorDetailMessage(err) ?? '') : requestErrorText(err, t));
+        const retryAfter = typeof detail?.retry_after === 'number' ? detail.retry_after : undefined;
+        setProbeFailure({ code, message, target, username: target.username, os: null, retryAfter });
       },
     });
   };
@@ -295,6 +309,8 @@ export function useSshSetup(active: boolean) {
     setFilesBackup,
     pairing: {
       unavailable: mint.isError,
+      // Why the one-line command was refused, when the reason is the cap.
+      limitMessage: mint.isError ? sshLimitMessage(mint.error, t) : null,
       command: token ? mint.data?.command ?? null : null,
       localOnly: mint.data?.local_only ?? false,
       scriptUrl: token ? mint.data?.script_url ?? null : null,

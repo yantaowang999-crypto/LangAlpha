@@ -466,6 +466,28 @@ def carried_previous(
     return kept[:PREVIOUS_DIR_NAMES_MAX]
 
 
+#: How many roots a workspace keeps of the computers it left. Each is a read a
+#: path fold tries, and a workspace that outlives this many moves has turns
+#: old enough that their links were never going to open anyway.
+PREVIOUS_ROOT_DIRS_MAX = 16
+
+
+def carried_roots(
+    left: Optional[str], landed: Optional[str], previous: Optional[Sequence[str]]
+) -> List[str]:
+    """The computer roots an old path in the workspace's threads may start with.
+
+    The live computer list stops naming a root once its computer is removed,
+    so the workspace keeps its own. The root left leads, as the folder left
+    does; one the target shares adds nothing, since its paths read the same.
+    """
+    kept = [root for root in previous or () if root]
+    left = (left or "").rstrip("/")
+    if left and left != (landed or "").rstrip("/"):
+        kept = [left, *(root for root in kept if root != left)]
+    return kept[:PREVIOUS_ROOT_DIRS_MAX]
+
+
 async def _flip_primary(cur, user_id: str, computer_id: str) -> None:
     """Make ``computer_id`` the user's primary; the old one is cleared first.
 
@@ -517,7 +539,7 @@ async def commit_workspace_move(move_id: str, runner_id: str) -> Optional[Dict[s
         # the workspace; held for update when the flip will write them.
         await cur.execute(
             f"""
-            SELECT computer_id, provider_ref, layout_version,
+            SELECT computer_id, provider_ref, layout_version, root_dir,
                    ({_TAKES_A_WORKSPACE}) AS takes_a_workspace
             FROM computers
             WHERE computer_id = %(target)s
@@ -532,10 +554,17 @@ async def commit_workspace_move(move_id: str, runner_id: str) -> Optional[Dict[s
         )
         # Owner first, workspace second, as every grant writer orders them.
         await lock_user_egress_state(cur, user_id)
+        # The source's root is read, not locked: a computer's root is fixed
+        # when it is made, and computer rows are locked ahead of this one.
         await cur.execute(
             """
-            SELECT workspace_id, user_id, name, computer_id, previous_dir_names, status
-            FROM workspaces WHERE workspace_id = %s FOR UPDATE
+            SELECT w.workspace_id, w.user_id, w.name, w.computer_id,
+                   w.previous_dir_names, w.previous_root_dirs, w.status,
+                   c.root_dir AS source_root_dir
+            FROM workspaces w
+            LEFT JOIN computers c ON c.computer_id = w.computer_id
+            WHERE w.workspace_id = %s
+            FOR UPDATE OF w
             """,
             (workspace_id,),
         )
@@ -570,6 +599,7 @@ async def commit_workspace_move(move_id: str, runner_id: str) -> Optional[Dict[s
             """
             UPDATE workspaces w
             SET previous_dir_names = %(carried)s::text[],
+                previous_root_dirs = %(roots)s::text[],
                 files_restore_incomplete_at = COALESCE(w.files_restore_incomplete_at, NOW()),
                 files_restore_offered_at = NULL,
                 files_epoch = %(move_id)s,
@@ -593,6 +623,11 @@ async def commit_workspace_move(move_id: str, runner_id: str) -> Optional[Dict[s
                     workspace["previous_dir_names"],
                     bound["dir_name"],
                     held,
+                ),
+                "roots": carried_roots(
+                    workspace["source_root_dir"],
+                    computer["root_dir"],
+                    workspace["previous_root_dirs"],
                 ),
                 "move_id": move_id,
                 "stamp_keys": list(SANDBOX_STAMP_KEYS),

@@ -46,7 +46,7 @@ import ShareUnavailable from './ShareUnavailable';
 import type { TextSegment } from '@/types/chat';
 import { isTaskAgentId } from '../ChatAgent/utils/agentId';
 import type { FileLocation } from '../ChatAgent/utils/fileLocation';
-import { computeAgentArtifactRouting, type ComputerFolders } from '../ChatAgent/utils/agentPaths';
+import { computeAgentArtifactRouting, computerFolders, type ComputerFolders } from '../ChatAgent/utils/agentPaths';
 import { collectRecentWritePaths, downloadTarget, type TurnMessage } from '../ChatAgent/utils/fileRefResolver';
 import { useStableHandler } from '@/hooks/useStableHandler';
 import { DispatchStatusProvider } from '../ChatAgent/hooks/usePTCDispatchStatus';
@@ -423,11 +423,14 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
   const imageDownloader = useCallback((path: string) => servedObjectUrl(servePrefix, path), [servePrefix]);
 
   // The workspace's folder, so its absolute paths read as workspace paths here
-  // as they do in the owner's view. Its siblings are not the viewer's.
-  const { root_dir: rootDir, dir_name: dirName } = metadata;
+  // as they do in the owner's view, a turn from before a move included. Its
+  // siblings are not the viewer's, nor are the owner's other computers.
+  const { root_dir: rootDir, dir_name: dirName, previous_root_dirs: previousRootDirs } = metadata;
   const folders = useMemo<ComputerFolders | null>(
-    () => (rootDir || dirName ? { rootDir, dirName, siblings: [] } : null),
-    [rootDir, dirName],
+    () => (rootDir || dirName
+      ? computerFolders({ workspace_id: '', root_dir: rootDir, dir_name: dirName, previous_root_dirs: previousRootDirs }, null)
+      : null),
+    [rootDir, dirName, previousRootDirs],
   );
 
   // Open file from chat (tool call artifacts, file mention cards)

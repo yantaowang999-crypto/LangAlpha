@@ -1,4 +1,4 @@
-"""A computer's stop ends its MCP supervisor however that was started.
+"""A computer's stop ends what its commands left running, and only that.
 
 Run here against real processes, since the script's whole job is matching the
 machine's process table. The generated client starts the supervisor in a
@@ -7,13 +7,14 @@ stop and delete of its computer.
 """
 
 import os
+import shlex
 import subprocess
 import sys
 import time
 
 import pytest
 
-from ptc_agent.core.sandbox.providers._ssh_shell import stop_script
+from ptc_agent.core.sandbox.providers._ssh_shell import framed_script, stop_script
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell")
 
@@ -88,3 +89,74 @@ def test_a_supervisor_in_its_own_session_ends_with_its_computer(tmp_path):
                     pass
             proc.wait(timeout=5)
             proc.stdout.close()
+
+
+# A process that outlives the shell starting it. Not one of the system's own
+# binaries, whose environment macOS keeps from ps.
+_LINGER = f"{shlex.quote(sys.executable)} -c 'import time; time.sleep(60)' >/dev/null 2>&1 &"
+
+
+def _stop(cdir) -> None:
+    subprocess.run(
+        ["bash", "-c", stop_script(str(cdir), root=False)], check=True, timeout=30
+    )
+
+
+def _kill(pid: int) -> None:
+    try:
+        os.kill(pid, 9)
+    except ProcessLookupError:
+        pass
+
+
+def test_what_a_finished_command_left_running_ends_with_the_stop(tmp_path):
+    """Its leader gone, the command's group is known by its mark, which what
+    the command started inherits."""
+    cdir = tmp_path / "c1"
+    (cdir / "execs").mkdir(parents=True)
+    left = tmp_path / "left.pid"
+    script = framed_script(
+        f"{_LINGER} echo $! > {shlex.quote(str(left))}",
+        computer_dir=str(cdir),
+        cwd=None,
+        computer=False,
+    )
+    subprocess.run(["bash", "-c", script], check=True, capture_output=True, timeout=30)
+    survivor = int(left.read_text())
+    try:
+        # The record stays while the group has a member.
+        assert [p.name for p in (cdir / "execs").iterdir()] == [
+            str(os.getpgid(survivor))
+        ]
+
+        _stop(cdir)
+
+        assert _gone(survivor)
+    finally:
+        _kill(survivor)
+
+
+def test_a_group_that_only_took_a_records_id_is_left_alone(tmp_path):
+    """A record outlives its group when the shell running the command is cut
+    off. Once the group is empty its id can go to someone else's group, whose
+    leader may then be gone too."""
+    cdir = tmp_path / "c1"
+    (cdir / "execs").mkdir(parents=True)
+    other = subprocess.run(
+        ["sh", "-c", f"{_LINGER} echo $!"],
+        capture_output=True,
+        text=True,
+        start_new_session=True,
+        env={"PATH": os.environ["PATH"]},
+        timeout=30,
+    )
+    member = int(other.stdout)
+    pgid = os.getpgid(member)
+    try:
+        (cdir / "execs" / str(pgid)).write_text(f"{pgid} 12345\n")
+
+        _stop(cdir)
+
+        assert not _gone(member, timeout=1.5)
+    finally:
+        _kill(member)

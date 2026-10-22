@@ -588,6 +588,16 @@ def previous_dir_names_of(workspace: Mapping[str, Any] | None) -> tuple[str, ...
     )
 
 
+def previous_roots_of(workspace: Mapping[str, Any] | None) -> tuple[str, ...]:
+    """The roots of the computers this workspace moved off, longest first.
+
+    A turn from before a move spells its links under one of them. The longest
+    goes first because one can sit inside another.
+    """
+    roots = (r.rstrip("/") for r in (workspace or {}).get("previous_root_dirs") or ())
+    return tuple(sorted((r for r in roots if r), key=len, reverse=True))
+
+
 _FILE_URL_SCHEME = "file://"
 
 
@@ -630,7 +640,11 @@ def _known_roots(work_dir: str) -> tuple[str, ...]:
 
 
 def workspace_relative_path(
-    path: str, work_dir: str, previous_dir_names: Sequence[str] = ()
+    path: str,
+    work_dir: str,
+    previous_dir_names: Sequence[str] = (),
+    *,
+    previous_roots: Sequence[str] = (),
 ) -> str:
     """Every spelling of a requested path folded to one ``work_dir``-relative form.
 
@@ -640,13 +654,25 @@ def workspace_relative_path(
     workspace was renamed out of, or as a ``file:`` URL of any of these. The
     sweep that split the root physically moved those entries into the folder,
     and a rename moves the folder, so each spelling names the same file the
-    folder spelling does.
+    folder spelling does. So does a move, for the folder spelled under a root
+    in ``previous_roots`` (most specific first) by any of its names.
 
     A leading slash survives a path no root claimed: whether that names a
     workspace file or nothing at all is the caller's policy, not this fold's.
     """
     raw = _file_url_path((path or "").strip()).replace("\\", "/")
     folder = work_dir.rstrip("/")
+    if raw != folder and not raw.startswith(f"{folder}/"):
+        # Another folder under a root left behind was a sibling's, so only
+        # this folder's own names fold there.
+        names = (posixpath.basename(folder), *previous_dir_names)
+        for root in previous_roots:
+            if raw.startswith(f"{root}/"):
+                inside = strip_previous_dir_name(
+                    _fold_relative(raw[len(root) + 1 :]), names
+                )
+                if inside is not None:
+                    return inside
     for root in _known_roots(work_dir):
         if raw == root:
             return ""

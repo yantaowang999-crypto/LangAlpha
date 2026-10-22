@@ -35,9 +35,12 @@ from src.server.models.computer import (
     ComputerSSHTunnelRequest,
 )
 from src.server.services import ssh_pairing
+from src.server.services.ssh_dial_budget import SSHDialBudgetExceeded, spend_dials
 from src.server.services.ssh_computers import (
     SSH_KIND,
+    SSHComputerLimit,
     SSHUnavailable,
+    check_ssh_capacity,
     client_key,
     ensure_client_key,
     key_install,
@@ -87,15 +90,33 @@ def _ssh_errors(*, structured: bool = False) -> Iterator[None]:
     with the ``code`` the client words its copy from."""
     try:
         yield
+    except SSHComputerLimit as e:
+        raise HTTPException(status_code=409, detail=e.detail()) from None
     except SSHUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e)) from None
     except ssh_pairing.PairingNotFound:
         raise HTTPException(
             status_code=404, detail="This command has expired."
         ) from None
+    except SSHDialBudgetExceeded as e:
+        raise _budget_refusal(e, structured=structured) from None
     except SSHConnectError as e:
         detail: Any = {"code": e.code, "message": str(e)} if structured else str(e)
         raise HTTPException(status_code=422, detail=detail) from None
+
+
+def _budget_refusal(
+    e: SSHDialBudgetExceeded, *, structured: bool = False
+) -> HTTPException:
+    """The 429 for a spent dial budget; ``retry_after`` lets a client word the wait itself."""
+    detail: Any = (
+        {"code": e.code, "message": str(e), "retry_after": e.retry_after}
+        if structured
+        else str(e)
+    )
+    return HTTPException(
+        status_code=429, detail=detail, headers={"Retry-After": str(e.retry_after)}
+    )
 
 
 def _plain_text_errors(
@@ -168,10 +189,14 @@ async def probe_ssh(request: ComputerSSHTarget, x_user_id: CurrentUserId):
 
     Its host key comes back for the user to confirm; the create pins it. A
     machine that refuses or cannot be reached answers 422 with a ``code`` the
-    client words its copy from and a sentence it may show as is.
+    client words its copy from and a sentence it may show as is; a caller with
+    as many ssh computers as allowed, 409 ``ssh_computer_limit``.
     """
     settings = await _ssh_settings(x_user_id)
     with _ssh_errors(structured=True):
+        # At the cap a dial would only find a machine it cannot add.
+        await check_ssh_capacity(x_user_id, settings)
+        await spend_dials(x_user_id, 1, settings=settings)
         found = await probe(
             await client_key(x_user_id),
             settings=settings,
@@ -198,9 +223,12 @@ async def create_ssh_pairing(request: Request, x_user_id: CurrentUserId):
     It authorizes the caller's key and reports how to reach the machine, which
     is dialed at once; GET /ssh/pairings/{token} then has the probe a create
     needs. It lives 15 minutes, and running it again re-checks the machine.
+    A caller with as many ssh computers as allowed is refused with 409
+    ``ssh_computer_limit``, before the command puts the key on a machine.
     """
-    await _ssh_settings(x_user_id)
+    settings = await _ssh_settings(x_user_id)
     with _ssh_errors():
+        await check_ssh_capacity(x_user_id, settings)
         return await ssh_pairing.create_pairing(
             x_user_id, request_base=str(request.base_url)
         )

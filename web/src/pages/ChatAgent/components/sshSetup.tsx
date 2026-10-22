@@ -336,8 +336,9 @@ function ManualView({ state, busy }: { state: SshSetupState; busy: boolean }) {
   return (
     <div className="flex flex-col gap-2 text-xs" data-testid="ssh-manual">
       {state.pairing.unavailable && (
-        <p style={mutedStyle}>
-          {t('computer.ssh.pairUnavailable', 'The one-line command is not available on this server, so set it up by hand.')}
+        <p role={state.pairing.limitMessage ? 'alert' : undefined} style={state.pairing.limitMessage ? dangerStyle : mutedStyle}>
+          {state.pairing.limitMessage ??
+            t('computer.ssh.pairUnavailable', 'The one-line command is not available on this server, so set it up by hand.')}
         </p>
       )}
       <AddressField

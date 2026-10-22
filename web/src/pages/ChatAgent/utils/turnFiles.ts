@@ -164,10 +164,10 @@ function filesInMessage(message: TurnMessage, folders?: ComputerFolders | null):
     // would mark a real chart as already drawn and suppress the card its Write
     // earned. The scan is a read, but it is the same prose/code split every
     // rewrite in this pipeline goes through.
-    mapOutsideCode(text ? normalizeFileRefs(text, folders?.rootDir) : '', (prose) => {
+    mapOutsideCode(text ? normalizeFileRefs(text, folders?.rootDir, folders?.otherRoots) : '', (prose) => {
       const collect = (raw: string, embeds: boolean) => {
         const dest = raw.replace(/^<|>$/g, '');
-        if (!isFilePath(dest, folders?.rootDir)) return;
+        if (!isFilePath(dest, folders)) return;
         // `#L12` and `:42` are link syntax, so they come off before the path
         // rules run: those drop a fragment, and would take the location with it.
         const { path: href, location } = splitFileLocation(dest);

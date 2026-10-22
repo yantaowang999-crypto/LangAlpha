@@ -1318,6 +1318,11 @@
     "failedLoadWorkspaces": "加载工作区失败，请刷新页面。",
     "invalidWorkspace": "无效工作区，请重试。",
     "failedDeleteWorkspace": "删除工作区失败，请重试。",
+    "deleteOwnMachine": {
+      "cannotUndo": "工作区及其对话将被删除，此操作无法撤销。",
+      "filesStay": "它的文件位于 {{computer}} 上的 {{folder}} 中，会保留在那里。",
+      "alsoDeleteFiles": "同时从这台机器上删除 {{folder}}"
+    },
     "loadingWorkspaces": "加载工作区中...",
     "backToThreads": "返回对话列表",
     "updated": "更新于 {{time}}",
@@ -1409,9 +1414,15 @@
     "remove": "移除",
     "removeTitle": "移除 {{name}}？",
     "removeBody": "它的沙箱和磁盘上的所有内容都会被删除，此操作无法撤销。",
-    "removeBodyOwnMachine": "我们将停止使用这台机器，并移除在上面为它设置的内容。{{folder}} 中的文件会保留，我们的密钥也会留在 ~/.ssh/authorized_keys 中，直到你将其删除。",
+    "removeBodyOwnMachine": "我们将停止使用这台机器，并移除在上面为它设置的内容。{{folder}} 中的文件会保留。",
     "removeConfirm": "移除计算机",
     "removing": "移除中...",
+    "removeKey": "从 ~/.ssh/authorized_keys 中移除我们的密钥",
+    "keyRemoved": "我们的密钥也已从 ~/.ssh/authorized_keys 中移除。",
+    "keyKept": "我们的密钥仍保留在 ~/.ssh/authorized_keys 中，因为 {{computer}} 还在用它登录。",
+    "keySkipped": "我们无法安全地移除密钥，它仍可用于登录这台机器。",
+    "keyUnreached": "我们无法连接这台机器，密钥仍留在上面。",
+    "keyRemoveYourself": "如需自行移除，请在 ~/.ssh/authorized_keys 中删除以 {{comment}} 结尾的那一行，其指纹为 {{fingerprint}}。",
     "removed": "已移除 {{name}}",
     "removeFailed": "无法移除这台计算机，请重试。",
     "removeBlocked": {
@@ -1539,6 +1550,8 @@
       "pairFailedNext": "修复后重新运行命令，或自行输入地址：",
       "pairRerun": "修复后重新运行命令。",
       "pairOtherUser": "命令是以 {{username}} 身份运行的。如需换一个登录用户，请以该用户身份运行命令。",
+      "limitReached_one": "最多可以添加 {{count}} 台 SSH 计算机。请先移除一台，再添加新的。",
+      "limitReached_other": "最多可以添加 {{count}} 台 SSH 计算机。请先移除一台，再添加新的。",
       "pairUnavailable": "此服务器不支持一行命令，请手动设置。",
       "manualLink": "改为手动设置",
       "pairingLink": "改用一行命令",
@@ -1578,6 +1591,7 @@
         "privateAddress": "这台机器位于私有网络，我们无法访问。请使用可从互联网访问的地址。",
         "unsupported": "不支持此机器。",
         "expired": "这条命令已过期，请运行新的命令。",
+        "rateLimited_other": "这个账号在过去一小时内尝试的 SSH 连接过多。请在 {{count}} 分钟后重试。",
         "generic": "无法连接，请重试。"
       }
     }

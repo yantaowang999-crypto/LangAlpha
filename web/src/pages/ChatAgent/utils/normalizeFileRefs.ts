@@ -48,17 +48,20 @@ const BACKTICK_LINK_RE = /`(!?\[[^\]]{0,512}\]\([^)]+\))`/g;
  *     → [report.md](/home/workspace/results/report.md)
  * It also reaches inside an angle-bracketed destination and keeps the brackets.
  * The computer's own root unwraps the same way: a computer whose user cannot
- * create the stock root keeps its workspaces under another one.
+ * create the stock root keeps its workspaces under another one. So do the
+ * roots the workspace sat under before a move (`ComputerFolders.otherRoots`),
+ * which an older turn's links start with.
  */
 const FILE_PROTO_RES = new Map<string, RegExp>();
 
-function fileProtoRe(root: string | null | undefined): RegExp {
-  const own = ownRootAlternation(root);
-  let re = FILE_PROTO_RES.get(own);
+function fileProtoRe(root: string | null | undefined, otherRoots: readonly string[]): RegExp {
+  const roots = [root, ...otherRoots].map(ownRootAlternation).filter(Boolean);
+  const key = roots.join('\u0000');
+  let re = FILE_PROTO_RES.get(key);
   if (!re) {
-    const alternation = own ? `${own}|${SANDBOX_ROOTS_ALTERNATION}` : SANDBOX_ROOTS_ALTERNATION;
+    const alternation = [...roots, SANDBOX_ROOTS_ALTERNATION].join('|');
     re = new RegExp(String.raw`(!?\[[^\]]{0,512}\]\(<?)file:\/\/(?=\/(?:${alternation})\/)`, 'g');
-    FILE_PROTO_RES.set(own, re);
+    FILE_PROTO_RES.set(key, re);
   }
   return re;
 }
@@ -123,13 +126,18 @@ const BRACKETED_LINE_DEST_RE = new RegExp(
  *
  * Run this ONCE before markdown parsing. After normalization, all file hrefs
  * are either clean relative paths or __wsref__/{uuid}/relative paths.
- * `root` is the computer's own root (`ComputerFolders.rootDir`).
+ * `root` is the computer's own root (`ComputerFolders.rootDir`), and
+ * `otherRoots` the ones the workspace may have sat under before.
  */
-export function normalizeFileRefs(content: string, root?: string | null): string {
+export function normalizeFileRefs(
+  content: string,
+  root?: string | null,
+  otherRoots: readonly string[] = [],
+): string {
   if (!content || typeof content !== 'string') return content;
 
   content = content.replace(BACKTICK_LINK_RE, '$1');     // step 1
-  content = content.replace(fileProtoRe(root), '$1');     // step 2
+  content = content.replace(fileProtoRe(root, otherRoots), '$1');  // step 2
   content = content.replace(WSREF_INNER_RE, '$1');        // step 3
   // Steps 4 and 5 rewrite a destination's text, which inside code would change
   // what the reader copies.

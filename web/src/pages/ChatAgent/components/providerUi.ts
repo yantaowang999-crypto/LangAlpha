@@ -45,9 +45,18 @@ export function providerCanBePrimary(kind: string): boolean {
 
 /**
  * Removing a machine the user brings stops using it and leaves their files
- * there; on every other provider the disk goes with the computer.
+ * there, and deleting a workspace on one leaves its folder unless the user
+ * asks for it to go; on every other provider the disk goes with the computer.
  */
 export function providerKeepsFilesOnRemove(kind: string): boolean {
+  return !!providerUi(kind)?.ownMachine;
+}
+
+/**
+ * Our key sits in the machine's `authorized_keys` for as long as we log in
+ * there, so removing the computer can take it out; a sandbox has no such line.
+ */
+export function providerHoldsOurKey(kind: string): boolean {
   return !!providerUi(kind)?.ownMachine;
 }
 

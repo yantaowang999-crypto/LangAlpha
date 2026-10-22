@@ -171,6 +171,8 @@ def _workspace_to_response(workspace: dict) -> WorkspaceResponse:
         computer_id=str(computer_id) if computer_id else None,
         dir_name=workspace.get("dir_name"),
         previous_dir_names=list(workspace.get("previous_dir_names") or ()),
+        root_dir=workspace.get("computer_root_dir") or None,
+        previous_root_dirs=list(workspace.get("previous_root_dirs") or ()),
         status=workspace["status"],
         is_home=is_home_row(workspace),
         created_at=workspace["created_at"],
@@ -958,16 +960,28 @@ async def refresh_workspace(
 
 
 @router.delete("/{workspace_id}", status_code=204)
-async def delete_workspace(workspace_id: str, x_user_id: CurrentUserId):
+async def delete_workspace(
+    workspace_id: str,
+    x_user_id: CurrentUserId,
+    delete_files: bool = Query(
+        False,
+        description=(
+            "Also delete the workspace's folder from a machine the user brought. "
+            "Without it that folder stays; on every other computer it is always deleted."
+        ),
+    ),
+):
     """
     Delete a workspace and its project data.
 
-    This permanently deletes the workspace and its folder. The computer and
-    sibling workspaces remain available.
+    This deletes the workspace and its folder, except on a machine the user
+    brought, where the folder stays unless ``delete_files`` is set. The
+    computer and sibling workspaces remain available.
 
     Args:
         workspace_id: Workspace UUID
         x_user_id: Authenticated user ID
+        delete_files: Also delete the folder from the user's own machine
     """
     try:
         workspace = await db_get_workspace(workspace_id)
@@ -976,7 +990,7 @@ async def delete_workspace(workspace_id: str, x_user_id: CurrentUserId):
         require_workspace_owner(workspace, user_id=x_user_id)
 
         manager = WorkspaceManager.get_instance()
-        await manager.delete_workspace(workspace_id)
+        await manager.delete_workspace(workspace_id, delete_files=delete_files)
 
         # Invalidate existence cache
         from src.server.database.conversation import ws_exists_key

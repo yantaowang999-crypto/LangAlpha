@@ -107,6 +107,13 @@ export interface Workspace {
   /** Folders a rename moved this workspace out of, most recent first. Paths in
    *  older turns still name them. */
   previous_dir_names?: string[];
+  /** The root of the computer this workspace is on, read with the row so its
+   *  paths read from the moment the row does. Null on the row a change answers
+   *  with, where the computer list's root stands in. */
+  root_dir?: string | null;
+  /** Roots of the computers a move took this workspace off, most recent first.
+   *  Paths in older turns still start under them. */
+  previous_root_dirs?: string[];
   /** The restore from this workspace's file backup did not finish, so the tree
    *  is short some files until the next start retries it. */
   files_restore_incomplete?: boolean;
@@ -305,6 +312,21 @@ export interface ComputerActionResponse {
   message?: string;
 }
 
+/** `DELETE /api/v1/computers/{id}` */
+export interface ComputerRemoveResponse {
+  /** What happened to our key line on an SSH computer's machine; null for other kinds, and when remove_key was false. */
+  key: ComputerKeyRemoval | null;
+}
+
+export interface ComputerKeyRemoval {
+  outcome: 'removed' | 'kept' | 'skipped' | 'unreached';
+  /** On `kept`: the name of the user's other computer that still logs in with the key. */
+  used_by: string | null;
+  /** The key's SHA256 fingerprint ("SHA256:...") and its comment ("langalpha"), for removing it by hand. */
+  fingerprint: string | null;
+  comment: string | null;
+}
+
 /** One entry of `GET /api/v1/computers/providers`. */
 export interface ComputerProviderOption {
   /** A sandbox backend, plain like {@link Computer.kind}: a deployment can
@@ -432,7 +454,8 @@ export type SshProbeErrorCode =
   | 'timeout'
   | 'host_key_mismatch'
   | 'unsupported'
-  | 'expired';
+  | 'expired'
+  | 'rate_limited';
 
 /** A refusal's code: one this build words, or one it shows in the server's words. */
 export type SshErrorCode = SshProbeErrorCode | (string & {});

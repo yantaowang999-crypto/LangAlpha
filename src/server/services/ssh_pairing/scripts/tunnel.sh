@@ -69,9 +69,9 @@ write_uninstall() {
 EOF
     printf "d='%s'\n" "$d"
     cat <<'EOF'
-label=ai.langalpha.tunnel
+label=ai.langalpha.TUNNEL_NAME
 plist="$HOME/Library/LaunchAgents/$label.plist"
-unit=langalpha-tunnel.service
+unit=langalpha-TUNNEL_NAME.service
 unit_file="$HOME/.config/systemd/user/$unit"
 
 if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -qF "$d/run.sh"; then
@@ -169,15 +169,15 @@ EOF
 start_service() {
   if [ "$os" = Darwin ]; then
     agents="$HOME/Library/LaunchAgents"
-    plist="$agents/ai.langalpha.tunnel.plist"
-    new="$agents/.ai.langalpha.tunnel.$$"
+    plist="$agents/ai.langalpha.TUNNEL_NAME.plist"
+    new="$agents/.ai.langalpha.TUNNEL_NAME.$$"
     mkdir -p "$agents" || fail "Could not create $agents."
     cat > "$new" <<EOF && mv -f "$new" "$plist" || fail "Could not write $plist."
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>ai.langalpha.tunnel</string>
+  <key>Label</key><string>ai.langalpha.TUNNEL_NAME</string>
   <key>ProgramArguments</key>
   <array><string>/bin/sh</string><string>$d/run.sh</string></array>
   <key>RunAtLoad</key><true/>
@@ -199,8 +199,8 @@ EOF
     done
   elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
     units="$HOME/.config/systemd/user"
-    unit="$units/langalpha-tunnel.service"
-    new="$units/.langalpha-tunnel.$$"
+    unit="$units/langalpha-TUNNEL_NAME.service"
+    new="$units/.langalpha-TUNNEL_NAME.$$"
     mkdir -p "$units" || fail "Could not create $units."
     cat > "$new" <<EOF && mv -f "$new" "$unit" || fail "Could not write $unit."
 [Unit]
@@ -215,7 +215,7 @@ RestartSec=10
 WantedBy=default.target
 EOF
     systemctl --user daemon-reload \
-      && systemctl --user enable --now langalpha-tunnel.service >/dev/null 2>&1 \
+      && systemctl --user enable --now langalpha-TUNNEL_NAME.service >/dev/null 2>&1 \
       || fail "Could not start the tunnel with systemctl --user."
     # Without lingering, systemd stops an account's services at its last logout.
     loginctl --no-ask-password enable-linger "$user" </dev/null >/dev/null 2>&1 \

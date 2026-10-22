@@ -17,8 +17,9 @@ from ptc_agent.core.sandbox.providers._ssh_authorized_key import authorized_key_
 from src.server.services.ssh_computers import ensure_client_key
 from src.server.services.ssh_pairing import state
 from src.server.services.ssh_tunnels import (
-    TUNNEL_DIR,
+    TUNNEL_PARENT,
     UNINSTALL_SCRIPT,
+    deployment_tunnel_name,
     tunnels_enabled,
 )
 
@@ -27,7 +28,8 @@ from src.server.services.ssh_tunnels import (
 TUNNEL_CUE = "tunnel"
 
 _SLOTS = re.compile(
-    r"\b(PRODUCT|KEY|REPORT|TUNNEL_URL|TUNNEL_DIR|UNINSTALL_SCRIPT|TUNNEL_CUE)\b"
+    r"\b(PRODUCT|KEY|REPORT|TUNNEL_URL|TUNNEL_DIR|TUNNEL_NAME|UNINSTALL_SCRIPT"
+    r"|TUNNEL_CUE)\b"
 )
 
 
@@ -67,9 +69,15 @@ async def render_script(token: str, settings: SSHConfig) -> str:
         "PRODUCT": state.PRODUCT,
         "KEY": shlex.quote(key),
         "REPORT": shlex.quote(state.curl_url_line(f"{pairing_url}/report")),
+    }
+    if not tunnels_enabled():
+        return _fill(_DIRECT, values)
+    name = await deployment_tunnel_name()
+    values |= {
         "TUNNEL_URL": shlex.quote(state.curl_url_line(f"{pairing_url}/tunnel")),
-        "TUNNEL_DIR": TUNNEL_DIR,
+        "TUNNEL_DIR": f"{TUNNEL_PARENT}/{name}",
+        "TUNNEL_NAME": name,
         "UNINSTALL_SCRIPT": UNINSTALL_SCRIPT,
         "TUNNEL_CUE": TUNNEL_CUE,
     }
-    return _fill(_TUNNELED if tunnels_enabled() else _DIRECT, values)
+    return _fill(_TUNNELED, values)

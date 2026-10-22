@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 from ptc_agent.config.core import SSHConfig
 from src.server.app import computers_ssh
+from src.server.services.ssh_dial_budget import SSHDialBudgetExceeded
 from tests.conftest import create_test_app
 
 PAIRING = "/api/v1/computers/ssh/pairings/abc"
@@ -81,3 +82,30 @@ async def test_a_form_past_the_cap_is_refused_unread(client, pairing, route, chu
     assert answer.status_code == 413
     assert answer.text == "What the machine sent was too large to read.\n"
     pairing[route].assert_not_awaited()
+
+
+_BUDGET_SPENT = SSHDialBudgetExceeded(1800)
+
+
+@pytest.mark.asyncio
+async def test_a_probe_past_the_budget_is_a_429_with_its_code_and_dials_nothing(client):
+    dialed = AsyncMock()
+    with (
+        patch.object(computers_ssh, "check_ssh_capacity", AsyncMock()),
+        patch.object(computers_ssh, "spend_dials", AsyncMock(side_effect=_BUDGET_SPENT)),
+        patch.object(computers_ssh, "client_key", AsyncMock(return_value="k")),
+        patch.object(computers_ssh, "probe", dialed),
+    ):
+        response = await client.post(
+            "/api/v1/computers/ssh/probe",
+            json={"host": "203.0.113.10", "port": 22, "username": "dev"},
+        )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "1800"
+    assert response.json()["detail"] == {
+        "code": "rate_limited",
+        "message": str(_BUDGET_SPENT),
+        "retry_after": 1800,
+    }
+    dialed.assert_not_called()

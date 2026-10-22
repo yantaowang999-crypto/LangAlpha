@@ -340,12 +340,14 @@ class SSHRuntime(ExecSessionRuntime):
         for its processes go (the data token, the connector relay's grant,
         the vault secrets, and any MCP check's copy of them), since nothing of
         this computer is left to use them.
+
+        The connection stays open for the removal's own steps after this one,
+        which close it (``ssh.removal_link``).
         """
         link = await self._link()
         await self._stop_processes(link)
         await self._run(link, delete_script(self._dir(link), root=self._working_dir))
         self._set_state(RuntimeState.STOPPED)
-        pool().retire(self._target, only_if_idle=True)
 
     async def get_state(self) -> RuntimeState:
         return await self._on_live_link(self._read_state)

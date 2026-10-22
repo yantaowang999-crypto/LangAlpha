@@ -61,6 +61,16 @@ describe('normalizeFileRefs', () => {
     expect(normalizeFileRefs(input)).toBe(input);
   });
 
+  it('unwraps file:// on a root the workspace moved off', () => {
+    // An older turn wrote its links under the computer it ran on; without the
+    // unwrap the sanitizer drops the scheme and the link with it.
+    const input = '[reports](file:///srv/old/AAPL/reports/) [r](file:///home/someone/langalpha/x.md)';
+    expect(normalizeFileRefs(input, '/home/someone/langalpha', ['/srv/old']))
+      .toBe('[reports](/srv/old/AAPL/reports/) [r](/home/someone/langalpha/x.md)');
+    expect(normalizeFileRefs(input, '/home/someone/langalpha'))
+      .toBe('[reports](file:///srv/old/AAPL/reports/) [r](/home/someone/langalpha/x.md)');
+  });
+
   it('unwraps file:// on an own root written percent-encoded', () => {
     // A destination is read before it is decoded, so a root with a space
     // arrives as `%20` and has to match in that spelling too.

@@ -17,13 +17,16 @@ import logging
 import posixpath
 import re
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from ptc_agent.config.core import SSHConfig
 from ptc_agent.core.sandbox.providers import ssh as ssh_provider
 from ptc_agent.core.sandbox.providers._ssh_authorized_key import authorized_key_line
 from ptc_agent.core.sandbox.providers.ssh_errors import SSHConnectError
-from src.server.database.computer import get_computers_for_user
+from src.server.database.computer import (
+    count_live_computers_of_kind,
+    get_computers_for_user,
+)
 from src.server.database.encryption import encryption_configured
 from src.server.database.ssh_keys import (
     get_user_ssh_private_key,
@@ -36,6 +39,7 @@ from src.server.models.computer import (
     ComputerSSHProbeResponse,
     ComputerSSHSpec,
 )
+from src.server.services.ssh_dial_budget import spend_dials
 from src.server.services.ssh_tunnels import tunnels_enabled
 
 logger = logging.getLogger(__name__)
@@ -60,6 +64,24 @@ class SSHKeyMissing(RuntimeError):
 
 class SSHFolderTaken(RuntimeError):
     """Another of the owner's computers on the machine works in the folder, above or below it."""
+
+
+class SSHComputerLimit(RuntimeError):
+    """The user has as many ssh computers as the deployment allows one user."""
+
+    code = "ssh_computer_limit"
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        super().__init__(
+            "You can have only 1 SSH computer. Remove it to add another."
+            if limit == 1
+            else f"You can have up to {limit} SSH computers. Remove one to add another."
+        )
+
+    def detail(self) -> Dict[str, Any]:
+        """The refusal as an API detail, whose ``code`` the client words."""
+        return {"code": self.code, "message": str(self), "limit": self.limit}
 
 
 def _require_encryption() -> None:
@@ -245,6 +267,17 @@ def provider_config_for(
     }
 
 
+async def check_ssh_capacity(user_id: str, settings: SSHConfig) -> None:
+    """Refuse another ssh computer once the user has ``max_computers_per_user``.
+
+    Raises:
+        SSHComputerLimit: The user is at the limit.
+    """
+    limit = settings.max_computers_per_user
+    if limit and await count_live_computers_of_kind(user_id, SSH_KIND) >= limit:
+        raise SSHComputerLimit(limit)
+
+
 def computer_sharing_folder(
     computers: Iterable[Dict[str, Any]],
     *,
@@ -267,14 +300,67 @@ def computer_sharing_folder(
     for computer in computers:
         if computer.get("kind") != SSH_KIND:
             continue
-        config = computer.get("provider_config") or {}
-        if config.get("host_key") != host_key and not _same_address(
-            config, host=host, port=port, tunnel_id=tunnel_id
+        if not _same_machine(
+            computer.get("provider_config") or {},
+            host=host,
+            port=port,
+            host_key=host_key,
+            tunnel_id=tunnel_id,
         ):
             continue
         if _nested(computer.get("root_dir") or "", root_dir):
             return computer
     return None
+
+
+def other_ssh_computers(
+    computers: Iterable[Dict[str, Any]], computer: Dict[str, Any]
+) -> Iterator[Dict[str, Any]]:
+    """The live ssh computers in ``computers`` other than ``computer``."""
+    for other in computers:
+        if (
+            other.get("kind") == SSH_KIND
+            and other.get("status") != "deleted"
+            and str(other.get("computer_id")) != str(computer.get("computer_id"))
+        ):
+            yield other
+
+
+def computer_sharing_login(
+    computers: Iterable[Dict[str, Any]], computer: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Another live ssh computer logging in to ``computer``'s machine as its user.
+
+    A user's computers all log in with the user's one key, so the key's line
+    there is that one's too, and taking it away would lock it out. A machine
+    counts as the same as for :func:`computer_sharing_folder`, where a clone
+    taken for it only leaves the key in place.
+    """
+    config = computer.get("provider_config") or {}
+    for other in other_ssh_computers(computers, computer):
+        theirs = other.get("provider_config") or {}
+        if theirs.get("username") == config.get("username") and _same_machine(
+            theirs,
+            host=config.get("host") or "",
+            port=config.get("port"),
+            host_key=config.get("host_key") or "",
+            tunnel_id=config.get("tunnel") or None,
+        ):
+            return other
+    return None
+
+
+def _same_machine(
+    config: Dict[str, Any],
+    *,
+    host: str,
+    port: Any,
+    host_key: str,
+    tunnel_id: Optional[str],
+) -> bool:
+    return config.get("host_key") == host_key or _same_address(
+        config, host=host, port=port, tunnel_id=tunnel_id
+    )
 
 
 def _same_address(
@@ -336,20 +422,23 @@ class SSHCreatePlan:
     provider_config: Dict[str, Any]
     root_dir: str
     default_name: str
+    settings: SSHConfig
 
     async def recheck(self, user_id: str) -> None:
-        """The folder check again, under the lock the insert holds, and the
-        tunnel's pairing renewed.
+        """The limit and the folder checked again, under the lock the insert
+        holds, and the tunnel's pairing renewed.
 
-        Two creates for one folder both pass the check made before the probe,
-        which is too slow to hold the lock. A tunnel left unused since its
-        pairing may meanwhile be claimed for taking off its machine; renewed
-        here, before the row that names it exists, it is not.
+        Two creates both pass the checks made before the probe, which is too
+        slow to hold the lock. A tunnel left unused since its pairing may
+        meanwhile be claimed for taking off its machine; renewed here, before
+        the row that names it exists, it is not.
 
         Raises:
+            SSHComputerLimit: Another create took the last one since.
             SSHFolderTaken: Another of the caller's computers took it since.
             SSHConnectError: The tunnel is gone, or being taken off its machine.
         """
+        await check_ssh_capacity(user_id, self.settings)
         await _unshared_root_dir(user_id, self.spec, self.root_dir)
         if self.spec.tunnel_id is not None:
             renewed = await renew_tunnel(user_id, self.spec.tunnel_id)
@@ -384,6 +473,7 @@ async def plan_create(
     starts.
 
     Raises:
+        SSHComputerLimit: The caller has as many as the deployment allows.
         SSHKeyMissing: The caller has no client key, so the machine cannot
             trust it yet.
         SSHUnavailable: As for :func:`client_key`.
@@ -393,6 +483,7 @@ async def plan_create(
         SSHFolderTaken: Another of the caller's computers there works in the
             folder.
     """
+    await check_ssh_capacity(user_id, settings)
     if not await has_client_key(user_id):
         raise SSHKeyMissing(
             "Add your SSH key to the machine before adding it. "
@@ -409,7 +500,6 @@ async def plan_create(
                 "That machine's tunnel is no longer yours or no longer exists. "
                 "Run the command on the machine again.",
             )
-    private_key = await client_key(user_id)
     # The model checks only the line's shape. A blob that does not parse
     # would fail the dial with a ValueError, which create answers as 404.
     if not is_public_key(spec.host_key):
@@ -418,6 +508,13 @@ async def plan_create(
             "The host key given is not a valid SSH public key. Test the "
             "connection again and confirm the key it shows.",
         )
+    # A tunnel dials our own gateway. Otherwise a default folder takes a
+    # first dial to find the home, then the one that holds the folder.
+    if spec.tunnel_id is None:
+        await spend_dials(
+            user_id, 1 if spec.root_dir is not None else 2, settings=settings
+        )
+    private_key = await client_key(user_id)
 
     async def dial(root_dir: Optional[str] = None) -> ssh_provider.SSHProbe:
         return await probe(
@@ -474,6 +571,7 @@ async def plan_create(
         ),
         root_dir=root_dir,
         default_name=found.hostname or spec.host,
+        settings=settings,
     )
 
 

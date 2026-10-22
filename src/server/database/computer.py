@@ -205,8 +205,10 @@ async def get_computer_for_workspace(
     binding needs the folder as often as it needs the machine, and a second
     query for it is a second answer that can disagree with this one, and so
     does ``files_epoch``, which says which arrival of the files a worker's
-    record of the folder is for. None is normal for an unbound Home and
-    backfill shared-sandbox tie-break losers.
+    record of the folder is for, and ``previous_root_dirs`` and
+    ``previous_dir_names``, which a fold of the workspace's older paths reads
+    beside the machine's own root and folder. None is normal for an unbound
+    Home and backfill shared-sandbox tie-break losers.
     """
     workspace_id = normalize_uuid(workspace_id)
     if workspace_id is None:
@@ -215,7 +217,8 @@ async def get_computer_for_workspace(
     async with _computer_cursor(conn) as cur:
         await cur.execute(
             f"""
-            SELECT {computer_cols("c")}, w.dir_name, w.files_epoch
+            SELECT {computer_cols("c")}, w.dir_name, w.files_epoch, w.previous_root_dirs,
+                w.previous_dir_names
             FROM computers c
             JOIN workspaces w ON w.computer_id = c.computer_id
             WHERE w.workspace_id = %s AND c.{FENCE_NOT_DELETED}
@@ -295,6 +298,22 @@ async def get_computers_for_user(
             (user_id,),
         )
         return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_live_computers_of_kind(
+    user_id: str, kind: str, *, conn=None
+) -> int:
+    async with _computer_cursor(conn) as cur:
+        await cur.execute(
+            f"""
+            SELECT count(*) AS computers
+            FROM computers
+            WHERE user_id = %s AND kind = %s AND {FENCE_NOT_DELETED}
+            """,
+            (user_id, kind),
+        )
+        row = await cur.fetchone()
+        return int(row["computers"]) if row else 0
 
 
 async def get_computer_names_and_home(
