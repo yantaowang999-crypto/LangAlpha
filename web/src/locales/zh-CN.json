@@ -3195,6 +3195,9 @@
         "partiallyFilled": "部分成交",
         "filled": "全部成交",
         "cancelled": "已撤单",
+        "handedOff": "已从券商的指令列表中移除，即已在券商处提交、删除或过期。券商不会告知是哪一种，可在账户订单中查看已提交的内容。",
+        "handedOffStaged": "已从 {{vendor}} 的指令列表中移除，即已在 {{vendor}} 提交、删除或过期。{{vendor}} 不会告知是哪一种，可在账户订单中查看已提交的内容。",
+        "handedOffStagedUnnamed": "已从券商的指令列表中移除，即已在券商处提交、删除或过期。券商不会告知是哪一种，可在账户订单中查看已提交的内容。",
         "rejectedByVendor": "券商拒绝了这笔订单",
         "failed": "未送达券商即失败",
         "unknown": "结果未知"
@@ -3212,6 +3215,7 @@
         "partiallyFilled": "部分成交",
         "filled": "已成交",
         "cancelled": "已撤单",
+        "handedOff": "已移交",
         "rejectedByVendor": "券商拒绝",
         "failed": "失败",
         "unknown": "未知"
@@ -4485,6 +4489,7 @@
       "open": "进行中",
       "filled": "已成交",
       "cancelled": "已撤单",
+      "handedOff": "已移交",
       "rejected": "已拒绝",
       "failed": "失败"
     }

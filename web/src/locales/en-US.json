@@ -3228,6 +3228,9 @@
         "partiallyFilled": "Partially filled",
         "filled": "Filled",
         "cancelled": "Cancelled",
+        "handedOff": "Left the brokerage's instruction list, so it was sent, deleted or expired there. The brokerage does not say which; the account's orders show what was sent.",
+        "handedOffStaged": "Left {{vendor}}'s instruction list, so it was sent, deleted or expired in {{vendor}}. {{vendor}} does not say which; the account's orders show what was sent.",
+        "handedOffStagedUnnamed": "Left the brokerage's instruction list, so it was sent, deleted or expired there. The brokerage does not say which; the account's orders show what was sent.",
         "rejectedByVendor": "Rejected by the brokerage",
         "failed": "Failed before the brokerage answered",
         "unknown": "Outcome unknown"
@@ -3245,6 +3248,7 @@
         "partiallyFilled": "Partial fill",
         "filled": "Filled",
         "cancelled": "Cancelled",
+        "handedOff": "Handed off",
         "rejectedByVendor": "Broker rejected",
         "failed": "Failed",
         "unknown": "Unknown"
@@ -4536,6 +4540,7 @@
       "open": "Open at the broker",
       "filled": "Filled",
       "cancelled": "Cancelled",
+      "handedOff": "Handed off",
       "rejected": "Rejected",
       "failed": "Failed"
     }
