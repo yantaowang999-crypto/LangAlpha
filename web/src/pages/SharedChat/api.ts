@@ -29,6 +29,9 @@ export interface SharedThreadMetadata {
    *  agent's absolute paths are spelled with. Absent from an older server. */
   root_dir?: string | null;
   dir_name?: string | null;
+  /** Roots of the computers the workspace moved off, which a turn from before
+   *  the move spells its paths under. */
+  previous_root_dirs?: string[] | null;
   permissions: Record<string, unknown>;
 }
 

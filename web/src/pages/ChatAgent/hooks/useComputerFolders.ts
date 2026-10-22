@@ -13,9 +13,11 @@ import { useComputerRootDir, useComputerRootDirs } from './useComputers';
  * since once bound to the computer an analyst reaches it as `../Home/`.
  *
  * The computer's root comes along too: the agent writes absolute paths under
- * it, and a computer whose user cannot create the stock root has its own. So
- * do the user's other computers' roots, which the workspace's folder may have
- * sat under before it moved.
+ * it, and a computer whose user cannot create the stock root has its own. The
+ * row carries it, so it is known as soon as the folders are; the computer list
+ * stands in for a row read without it. So do the roots the workspace's folder
+ * may have sat under before it moved: the user's other computers', and the
+ * ones the row recorded leaving, whose computers may since be gone.
  */
 export function useComputerFolders(workspaceId: string | null | undefined): ComputerFolders | null {
   const { data: viewed } = useWorkspace(workspaceId);

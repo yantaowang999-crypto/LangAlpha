@@ -107,6 +107,13 @@ export interface Workspace {
   /** Folders a rename moved this workspace out of, most recent first. Paths in
    *  older turns still name them. */
   previous_dir_names?: string[];
+  /** The root of the computer this workspace is on, read with the row so its
+   *  paths read from the moment the row does. Null on the row a change answers
+   *  with, where the computer list's root stands in. */
+  root_dir?: string | null;
+  /** Roots of the computers a move took this workspace off, most recent first.
+   *  Paths in older turns still start under them. */
+  previous_root_dirs?: string[];
   /** The restore from this workspace's file backup did not finish, so the tree
    *  is short some files until the next start retries it. */
   files_restore_incomplete?: boolean;

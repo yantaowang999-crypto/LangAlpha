@@ -79,6 +79,7 @@ from ._shared import (
     owner_layout,
     owner_work_dir,
     previous_dir_names_of,
+    previous_roots_of,
     _is_always_hidden_path,
     _is_binary,
     HOME_NOT_ON_COMPUTER_REASON,
@@ -319,10 +320,16 @@ def _folded_refs(
     """The workspace's folder, and the reference and recent writes folded onto it."""
     work_dir = owner_work_dir(workspace)
     previous_dirs = previous_dir_names_of(workspace)
-    candidates = clean_candidates(body.candidates, work_dir, previous_dirs)
+    previous_roots = previous_roots_of(workspace)
+    candidates = clean_candidates(
+        body.candidates, work_dir, previous_dirs, previous_roots=previous_roots
+    )
     recent_writes = [
         p
-        for p in (clean_path(w, work_dir, previous_dirs) for w in body.recent_writes)
+        for p in (
+            clean_path(w, work_dir, previous_dirs, previous_roots=previous_roots)
+            for w in body.recent_writes
+        )
         if p
     ]
     return work_dir, candidates, recent_writes

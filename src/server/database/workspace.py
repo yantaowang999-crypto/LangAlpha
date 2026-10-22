@@ -69,6 +69,7 @@ _WS_COLUMNS: tuple[str, ...] = (
     "computer_id",
     "dir_name",
     "previous_dir_names",
+    "previous_root_dirs",
     "layout_origin",
     "status",
     "created_at",
@@ -1071,9 +1072,15 @@ async def get_workspaces_for_user(
             count_result = await cur.fetchone()
             total = count_result["total"] if count_result else 0
 
+            # The root rides on each row as on the detail read, so a page that
+            # seeds a workspace from its list reads its paths without waiting on
+            # the computers. A subquery, since a join would make the bare
+            # columns the ordering names ambiguous.
             await cur.execute(
                 f"""
-                SELECT {_WS_COLS}
+                SELECT {_WS_COLS},
+                       (SELECT c.root_dir FROM computers c
+                        WHERE c.computer_id = workspaces.computer_id) AS computer_root_dir
                 FROM workspaces
                 WHERE user_id = %(user_id)s {status_filter} {home_filter}
                 ORDER BY {order_clause}, workspace_id DESC

@@ -155,6 +155,22 @@ class WorkspaceResponse(BaseModel):
             "under one of them still means this workspace's folder"
         ),
     )
+    root_dir: Optional[str] = Field(
+        None,
+        description=(
+            "The root of the computer this workspace is on, where its folder "
+            "sits and where the agent's absolute paths start; given on the "
+            "detail and the list, null on the answer to a change"
+        ),
+    )
+    previous_root_dirs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Roots of the computers this workspace moved off, newest first; "
+            "a path under one of them through its folder still means this "
+            "workspace's folder"
+        ),
+    )
     status: str = Field(
         description=(
             "Workspace status: creating, starting, running, stopping, stopped, "

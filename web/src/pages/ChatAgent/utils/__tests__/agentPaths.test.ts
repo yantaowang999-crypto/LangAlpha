@@ -841,6 +841,33 @@ describe('a root the workspace has moved off', () => {
       .not.toHaveProperty('otherRoots');
   });
 
+  it('keeps a root the row recorded leaving after its computer is gone from the list', () => {
+    const viewed = { workspace_id: 'ws-1', dir_name: 'AAPL', previous_root_dirs: [OLD, '/home/workspace'] };
+    const read = computerFolders(viewed, [], '/srv/here', ['/srv/here']);
+    expect(read?.otherRoots).toEqual([OLD]);
+    expect(computeAgentArtifactRouting(`${OLD}/AAPL/results/q3.csv`, undefined, read))
+      .toMatchObject({ targetFile: 'results/q3.csv', setWorkspaceId: null });
+  });
+
+  it('reads no other workspace\'s former roots', () => {
+    // A sibling that left a computer has its folder under that root, not this
+    // workspace's, so its record must not fold a path there into this one.
+    const viewed = { workspace_id: 'ws-1', computer_id: 'c1', dir_name: 'AAPL' };
+    const sibling = { workspace_id: 'ws-2', computer_id: 'c1', dir_name: 'AAPL-2', previous_root_dirs: [OLD] };
+    const read = computerFolders(viewed, [viewed, sibling], '/srv/here', ['/srv/here']);
+    expect(read).not.toHaveProperty('otherRoots');
+    expect(computeAgentArtifactRouting(`${OLD}/AAPL/x.md`, undefined, read)).toMatchObject({ targetFile: `${OLD}/AAPL/x.md` });
+  });
+
+  it('reads its own root off the row before the computer list answers', () => {
+    const viewed = { workspace_id: 'ws-1', dir_name: 'AAPL', root_dir: '/srv/here' };
+    expect(computerFolders(viewed, [], undefined, undefined)?.rootDir).toBe('/srv/here');
+    // A row read without one, the answer to a change, takes the list's.
+    expect(computerFolders({ ...viewed, root_dir: null }, [], '/srv/here', ['/srv/here'])?.rootDir).toBe('/srv/here');
+    // And the own root is never listed as another one.
+    expect(computerFolders(viewed, [], undefined, ['/srv/here', OLD])?.otherRoots).toEqual([OLD]);
+  });
+
   it('routes a path through its current or former folder into this workspace', () => {
     expect(computeAgentArtifactRouting(`${OLD}/AAPL/results/q3.csv`, undefined, folders))
       .toMatchObject({ targetFile: 'results/q3.csv', setWorkspaceId: null });
@@ -864,6 +891,27 @@ describe('a root the workspace has moved off', () => {
     const nested = ['/home/dev', OLD];
     expect(workspaceScopedPath(parseAgentPath(`${OLD}/AAPL/x.md`), 'AAPL', null, nested)).toBe('x.md');
     expect(workspaceScopedPath(parseAgentPath('/home/dev/AAPL/x.md'), 'AAPL', null, nested)).toBe('x.md');
+  });
+
+  it('reads a path under two roots by the longer one first', () => {
+    // Under `/srv/old` through a former folder, before `/srv` through the current one.
+    const scoped = (path: string) => workspaceScopedPath(parseAgentPath(path), 'old', ['Research'], ['/srv', '/srv/old']);
+    expect(scoped('/srv/old/Research/a.md')).toBe('a.md');
+    expect(scoped('/srv/old/notes/a.md')).toBe('notes/a.md');
+  });
+
+  it('reads a root it left inside the one it is on now', () => {
+    // Moved from `~/langalpha` to `~`: this computer's root takes the path first.
+    const viewed = { workspace_id: 'ws-1', dir_name: 'AAPL', root_dir: '/home/dev', previous_root_dirs: [OLD] };
+    const read = computerFolders(viewed, [], undefined, undefined);
+    expect(computeAgentArtifactRouting(`${OLD}/AAPL/results/q3.csv`, undefined, read))
+      .toMatchObject({ targetFile: 'results/q3.csv' });
+    expect(computeAgentArtifactRouting('/home/dev/AAPL/x.md', undefined, read)).toMatchObject({ targetFile: 'x.md' });
+    expect(workspaceScopedPath(parseAgentHref(`file://${OLD}/AAPL/a%20b.md`, '/home/dev'), 'AAPL', null, [OLD]))
+      .toBe('a b.md');
+    // Through no folder of this workspace's, it stays as this computer reads it.
+    expect(computeAgentArtifactRouting(`${OLD}/NVDA/x.md`, undefined, read))
+      .toMatchObject({ targetFile: `${OLD}/NVDA/x.md` });
   });
 });
 
